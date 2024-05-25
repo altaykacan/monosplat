@@ -1,0 +1,1 @@
+This is where all the pretrained model weights should go, especially if you're using mmsegmentation.
