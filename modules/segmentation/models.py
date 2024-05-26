@@ -29,15 +29,24 @@ class InstanceSegmentationModel(BaseModel):
         `output_dict`: ...
     """
     def _check_input(self, input_dict: Dict):
-        assert "images" in input_dict.keys(), "Couldn't find the key 'images' in your input_dict, check your input to the model!"
-        assert "classes_to_detect" in input_dict.keys(), "Couldn't find the key 'classes_to_detect' in your input_dict, check your input to the model!"
-        assert len(input_dict["images"].shape) == 4, "Expected (N, C, H, W) input, the shape of your inputs do not match!"
+        if "images" not in input_dict.keys():
+            raise ValueError("Couldn't find the key 'images' in your input_dict, check your input to the model!")
+        if "classes_to_detect" not in input_dict.keys():
+            raise ValueError("Couldn't find the key 'classes_to_detect' in your input_dict, check your input to the model!")
+        if len(input_dict["images"].shape) != 4:
+            raise ValueError("Expected (N, C, H, W) input, the shape of your inputs do not match!")
+        if not isinstance(input_dict["classes_to_detect"], list):
+            raise ValueError("Expected 'classes_to_detect' to be a list, check your input to the model!")
 
     def _check_output(self, output_dict: Dict):
-        assert "instance_masks" in output_dict.keys(), "Couldn't find the key 'instance_masks' in your output_dict, check your prediction function!"
-        assert "boxes" in output_dict.keys(), "Couldn't find the key 'boxes' in your output_dict, check your prediction function!"
-        assert isinstance(output_dict["masks"], list), "Expected 'masks' to be a list of tensors, check you prediction function!"
-        assert isinstance(output_dict["boxes"], list), "Expected 'boxes' to be a list of tensors, check you prediction function!"
+        if "instance_masks" not in output_dict.keys():
+            raise ValueError("Couldn't find the key 'instance_masks' in your output_dict, check your prediction function!")
+        if "boxes" not in output_dict.keys():
+            raise ValueError("Couldn't find the key 'boxes' in your output_dict, check your prediction function!")
+        if not isinstance(output_dict["masks"], list):
+            raise ValueError("Expected 'masks' to be a list of tensors, check your prediction function!")
+        if not isinstance(output_dict["boxes"], list):
+            raise ValueError("Expected 'boxes' to be a list of tensors, check your prediction function!")
 
 
 class SegmentationModel(BaseModel):
@@ -49,10 +58,14 @@ class SegmentationModel(BaseModel):
         `output_dict`: ...
     """
     def _check_input(self, input_dict: Dict):
-        assert "images" in input_dict.keys(), "Couldn't find the key 'images' in your input_dict, check your input to the model!"
-        assert "classes_to_segment" in input_dict.keys(), "Couldn't find the key 'classes_to_segment' in your input_dict, check your input to the model!"
-        assert len(input_dict["images"].shape) == 4, "Expected (N, C, H, W) input, the shape of your inputs do not match!"
-        assert isinstance(input_dict["classes_to_segment"], list), "Expected 'classes_to_segment' to be a list, check your input to the model!"
+        if "images" not in input_dict.keys():
+            raise ValueError("Couldn't find the key 'images' in your input_dict, check your input to the model!")
+        if "classes_to_segment" not in input_dict.keys():
+            raise ValueError("Couldn't find the key 'classes_to_segment' in your input_dict, check your input to the model!")
+        if len(input_dict["images"].shape) != 4:
+            raise ValueError("Expected (N, C, H, W) input, the shape of your inputs do not match!")
+        if not isinstance(input_dict["classes_to_segment"], list):
+            raise ValueError("Expected 'classes_to_segment' to be a list, check your input to the model!")
 
     def _check_output(self, output_dict: Dict):
         assert "masks_dict" in output_dict.keys(), "Couldn't find the key 'masks_dict' in your output_dict, check your prediction function!"
@@ -151,8 +164,8 @@ class SegFormer(SegmentationModel):
     SegFormer model for semantic segmentation using MMSeg library.
 
     Expected inputs and outputs:
-    `intput_dict`: ...
-    `output_dict`: ...
+    `intput_dict`: `{"images": torch.Tensor (N, 3, H, W), "classes_to_segment": List[str]}`
+    `output_dict`: `{"masks_dict": dictionary of (N, 1, H, W) torch tensors where the keys are the names of the classes as strings}`
     """
     def __init__(self, cfg: Dict = {}):
         if not mmseg_found:

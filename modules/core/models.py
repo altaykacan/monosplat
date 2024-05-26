@@ -17,13 +17,26 @@ except ImportError:
 
 class OpticalFlowModel(BaseModel):
     def _check_input(self, input_dict: Dict):
-        assert "image_a" in input_dict.keys()
-        assert "image_b" in input_dict.keys()
+        if not "image_a" in input_dict.keys():
+            raise ValueError
+        if not "image_b" in input_dict.keys():
+            raise ValueError
+        if len(input_dict["image_a"].shape) != 4:
+            raise ValueError
+        if len(input_dict["image_b"].shape) != 4:
+            raise ValueError
 
     def _check_output(self):
         pass
 
 class RAFT(OpticalFlowModel):
+    """
+    Pretrained RAFT model using torchvision.
+
+    Expected inputs and outputs for `predict()`:
+    `intput_dict`: `{"image_a": torch.Tensor (N, 3, H, W), "image_b": torch.Tensor (N, 3, H, W)}`
+    `output_dict`: `{"flow": torch.Tensor (N, 2, H, W)}`
+    """
     def __init__(self, cfg: Dict = {}):
         if not torchvision_found:
             raise ImportError("torchvision can't be imported. Please check you have it installed before using a RAFT model!")
