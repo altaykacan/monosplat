@@ -34,19 +34,22 @@ class RAFT(OpticalFlowModel):
     Pretrained RAFT model using torchvision.
 
     Expected inputs and outputs for `predict()`:
-    `intput_dict`: `{"image_a": torch.Tensor (N, 3, H, W), "image_b": torch.Tensor (N, 3, H, W)}`
-    `output_dict`: `{"flow": torch.Tensor (N, 2, H, W)}`
+    `intput_dict`: `{"image_a": torch.Tensor [N, 3, H, W], "image_b": torch.Tensor [N, 3, H, W]}`
+    `output_dict`: `{"flow": torch.Tensor [N, 2, H, W]}`
     """
-    def __init__(self, cfg: Dict = {}):
+    def __init__(self, model_size: str="LARGE", weights_config: str = "DEFAULT", device: str = None):
         if not torchvision_found:
             raise ImportError("torchvision can't be imported. Please check you have it installed before using a RAFT model!")
 
-        self.model_size = cfg.get("raft_model_size", "LARGE")
-        self.weights_config = cfg.get("raft_weights_config", "DEFAULT")
+        self.model_size =  model_size
+        self.weights_config = weights_config
 
         self._model = None
         self._weights = None
-        self._device = cfg.get("device", "cuda" if torch.cuda.is_available() else "cpu")
+        if device is None:
+            self._device ="cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            self._device = device
 
     def load(self):
         if self._model is None and self._weights is None:
@@ -76,6 +79,7 @@ class RAFT(OpticalFlowModel):
     def unload(self):
         self._model = None
         self._weights = None
+        torch.cuda.empty_cache()
 
     def _preprocess(self, input_dict: Dict) -> Dict:
         image_a = input_dict["image_a"]

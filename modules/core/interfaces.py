@@ -1,5 +1,6 @@
+"""Defines the abstract interfaces for core components of the framework"""
 from pathlib import Path
-from typing import Union, Dict, NamedTuple
+from typing import Union, Dict, Tuple, List, NamedTuple
 from abc import ABC, abstractmethod
 
 import torch
@@ -50,6 +51,11 @@ class BaseModel(ABC):
         pass
 
     def predict(self, input_dict: Dict) -> Dict:
+        """
+        Main interface to get predictions from any model. See the docstrings
+        of the respective classes for info on what the input and output dictionaries
+        should be.
+        """
         self.load()
         self._check_input(input_dict)
         input_dict = self._preprocess(input_dict)
@@ -57,7 +63,6 @@ class BaseModel(ABC):
         self._check_output(output_dict)
 
         return output_dict
-
 
 
 class BaseMap(ABC):
@@ -77,8 +82,9 @@ class BaseMap(ABC):
         pass
 
     @abstractmethod
-    def increment(self, submap):
-        """Adds a new submap to the existing map"""
+    def increment(self, masked_depths, poses):
+        """Adds a new submap to the existing map by backprojecting"""
+        pass
 
 
 
@@ -103,3 +109,24 @@ class BaseConfigParser(ABC):
     def parse(self, Reconstructor: BaseReconstructor, cfg: Dict):
         pass
 
+
+class BaseDataset(ABC):
+    @abstractmethod
+    def compute_target_intrinsics(self):
+        pass
+
+    @abstractmethod
+    def load_image_paths_and_poses(self):
+        pass
+
+    @abstractmethod
+    def preprocess(self, image: torch.Tensor) -> torch.Tensor:
+        pass
+
+    @abstractmethod
+    def __len__(self) -> int:
+        pass
+
+    @abstractmethod
+    def __get_item__(self, idx: int) -> Tuple: # TODO what should it return?
+        pass

@@ -111,6 +111,7 @@ class MaskRCNN(InstanceSegmentationModel):
     def unload(self):
         self._model = None
         self._weights = None
+        torch.cuda.empty_cache()
 
     def _preprocess(self, input_dict: Dict) -> Dict:
         images = input_dict["images"]
@@ -197,7 +198,7 @@ class SegFormer(SegmentationModel):
 
     def unload(self):
         self._model = None
-
+        torch.cuda.empty_cache()
 
     def _preprocess(self, input_dict: Dict) -> Dict:
         return input_dict
