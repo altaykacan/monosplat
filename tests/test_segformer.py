@@ -7,10 +7,10 @@ from torchvision.transforms.functional import to_pil_image, pil_to_tensor
 
 from modules.segmentation.models import SegFormer
 
-image_a_path = Path("/usr/stud/kaa/thesis/Toolbox-Draft/data/kitti/images/001030.png")
-image_b_path = Path("/usr/stud/kaa/thesis/Toolbox-Draft/data/kitti/images/000743.png")
-image_a = pil_to_tensor(Image.open(image_a_path))
-image_b = pil_to_tensor(Image.open(image_b_path))
+image_a_path = Path("./demo/munich_1.png")
+image_b_path = Path("./demo/munich_2.png")
+image_a = pil_to_tensor(Image.open(image_a_path).convert('RGB'))
+image_b = pil_to_tensor(Image.open(image_b_path).convert('RGB'))
 
 images = torch.stack((image_a, image_b), dim=0)
 
