@@ -1,3 +1,6 @@
 [submodule "submodules/UniDepth"]
 	path = submodules/UniDepth
 	url = git@github.com:lpiccinelli-eth/UniDepth.git
+[submodule "submodules/Metric3D"]
+	path = submodules/Metric3D
+	url = git@github.com:YvanYin/Metric3D.git
