@@ -72,20 +72,19 @@ class BaseMap(ABC):
         pass
 
     @abstractmethod
-    def clean(self):
-        """Cleans outliers from the map"""
-        pass
-
-    @abstractmethod
     def transform(self, T: torch.Tensor):
-        """Transforms the Map in place according to a rigid body transform `T` """
+        """Transforms the map in-place according to a rigid body transform `T` """
         pass
 
     @abstractmethod
-    def increment(self, masked_depths, poses):
-        """Adds a new submap to the existing map by backprojecting"""
+    def increment(self, xyz: torch.Tensor, rgb: torch.Tensor, normals: torch.Tensor):
+        """Initializes and Increments the existing map"""
         pass
 
+    @abstractmethod
+    def postprocess(self):
+        """Applies postprocessing to the map, i.e. cleaning, downsampling, normal estimation, etc."""
+        pass
 
 
 class BaseReconstructor(ABC):
@@ -95,19 +94,44 @@ class BaseReconstructor(ABC):
         pass
 
     @abstractmethod
-    def still_running(self) -> bool:
-        """Function to check whether the Reconstructor is still processing the images"""
+    def step(self, images, poses):
+        """One step of the reconstruction process. Specific to reconstructors"""
         pass
 
     @abstractmethod
-    def step(self):
-        """One step of the reconstruction process. Specific to reconstructors."""
+    def parse_config(self, cfg: Dict):
+        """Parses the configuration dictionary and sets instance variables"""
         pass
 
-class BaseConfigParser(ABC):
+class BaseBackprojector(ABC):
     @abstractmethod
-    def parse(self, Reconstructor: BaseReconstructor, cfg: Dict):
+    def backproject(self, values: torch.Tensor, depths: torch.Tensor, poses: torch.Tensor, masks: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Backprojects pixels based on depth and masks, converts the 3D points
+        to world coordinates from the camera frame using the poses. Returns a
+        tuple of the `xyz` coordinates and the associated value from `values`
+        for each point as `[C, num_points]`
+        """
         pass
+
+    @abstractmethod
+    def compute_backprojection_masks(self, images: torch.Tensor, depths: torch.Tensor) -> torch.Tensor:
+        """
+        Computes which pixels should be included in the backprojection, returns
+        the masks as `[N, 1, H, W]` tensors with pixels to backproject as `True`
+        """
+        pass
+
+
+class BaseLogger(ABC):
+    @abstractmethod
+    def __init__(self, reconstructor: BaseReconstructor):
+        pass
+
+    @abstractmethod
+    def log_step(self):
+        pass
+
 
 
 class BaseDataset(ABC):
@@ -128,5 +152,5 @@ class BaseDataset(ABC):
         pass
 
     @abstractmethod
-    def __get_item__(self, idx: int) -> Tuple: # TODO what should it return?
+    def __getitem__(self, idx: int) -> Tuple: # TODO what should it return?
         pass

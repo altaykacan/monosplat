@@ -19,3 +19,4 @@ checkpoints/*.pth
 
 
 # Debug
+tests/test_results/*

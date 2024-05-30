@@ -1,4 +1,5 @@
-from typing import Dict, List, Tuple
+from pathlib import Path
+from typing import Dict, List, Tuple, Union
 
 import torch
 import cv2
@@ -9,6 +10,14 @@ from modules.core.interfaces import BaseModel
 
 
 class DepthModel(BaseModel):
+    """
+    Depth model parent class. Implement `__init__()`, `_preprocess()`,
+    `_predict()`, and `load()` and `unload()`
+
+    Expected inputs and outputs for `self.predict()`:
+    `input_dict`: `{}`
+    `output_dict`: `{}`
+    """
     def _check_input(self, input_dict: Dict):
         pass
 
@@ -19,19 +28,26 @@ class Metric3Dv2(DepthModel):
     """
     Metric3Dv2 model for monocular metric depth prediction.
 
-    Expected inputs when initializing
-    `cfg`: `{"intriniscs": Tuple[float] pinhole intrinsics as (fx, fy, cx, cy), "depth_pred_size": Tuple[int] size that the input images will be resized to before giving them to the depth model}`
-
-    Expected inputs and outputs for prediction
+    Expected inputs and outputs for `Metric3Dv2.predict()`:
     `input_dict`: `{"images": batched image tensors with shape [N, C, H, W]}`
     `output_dict`: `{"pred_depth": batched depth predictions with shape [N, C, H, W]}`
     """
-    def __init__(self, intrinsics: Tuple, depth_pred_size: Tuple, device: str = None):
+    def __init__(self, intrinsics: Tuple, depth_pred_size: Tuple = (), backbone="convnext", device: str = None):
         self._intrinsics = intrinsics
         self._transformed_intrinsics = None
 
         # Suggestions from the authors for vit model: (616, 1064), for convnext model: (544, 1216)
-        self._input_size = depth_pred_size
+        if depth_pred_size != ():
+            self._input_size = depth_pred_size
+        else:
+            if "vit" in backbone:
+                self._input_size = (616, 1064)
+            elif "convnext" in backbone:
+                self._input_size = (544, 1216)
+            else:
+                raise NotImplementedError("Backbones other that 'vit' or 'convnext' are not supported for Metric3Dv2!")
+
+        self._backbone = backbone
         self._pad_info = None
 
         self._model = None
@@ -42,15 +58,25 @@ class Metric3Dv2(DepthModel):
 
 
     def load(self):
+        # TODO implement own wrapper just in case torch hub is not available
         if self._model is None:
-            self._model = torch.hub.load('yvanyin/metric3d', 'metric3d_vit_giant2', pretrain=True)
+            if self._backbone == "vit":
+                self._model = torch.hub.load('yvanyin/metric3d', 'metric3d_vit_giant2', pretrain=True)
+            elif self._backbone == "vit_small":
+                self._model = torch.hub.load('yvanyin/metric3d', 'metric3d_vit_small', pretrain=True)
+            elif self._backbone == "convnext":
+                self._model = torch.hub.load('yvanyin/metric3d', 'metric3d_convnext_large', pretrain=True)
+            else:
+                raise NotImplementedError(f"The provided backbone {self._backbone} is not valid for Metric3Dv2, please check pretrained model name!")
+
             self._model.cuda().eval()
-            # TODO implement own wrapper just in case torch hub is not available
+        return None
 
 
     def unload(self):
         self._model = None
         torch.cuda.empty_cache()
+        return None
 
 
     def _preprocess(self, input_dict: Dict) -> Dict:
@@ -91,8 +117,8 @@ class Metric3Dv2(DepthModel):
         preprocessed_images = torch.stack(preprocessed_images, dim=0) # [N, C, H, W]
 
         # Normalize using imagenet mean and standard deviation as floats scaled between 0-255
-        mean = torch.tensor([123.675, 116.28, 103.53]).float()[None, :, None, None]
-        std = torch.tensor([58.395, 57.12, 57.375]).float()[None, :, None, None]
+        mean = torch.tensor([123.675, 116.28, 103.53]).float().to(self._device)[None, :, None, None]
+        std = torch.tensor([58.395, 57.12, 57.375]).float().to(self._device)[None, :, None, None]
 
         preprocessed_images = (preprocessed_images - mean) / std
 
@@ -127,12 +153,12 @@ class Metric3Dv2(DepthModel):
 
         return {"depths": pred_depth}
 
-class KITTI360DummyDepthModel(DepthModel):
+class KITTI360DepthModel(DepthModel):
     """
     Dummy Depth Model that reads in the ground truth data from KITTI360
 
-    Expected input and output for `KITTI360DummyDepthModel.predict()`:
-    `input_dict`: `{"indices":  List[int] indices of the images to 'predict' depths by loading in the daset}`
+    Expected input and output for `KITTI360DepthModel.predict()`:
+    `input_dict`: `{"frame_ids":  List[int] frame ids of the images to 'predict' depths by loading in ground truth depths}`
     `output_dict`: `{"depths": Batched loaded in ground truth depth values [N, 1, H, W]}`
 
     """
@@ -149,17 +175,32 @@ class KITTI360DummyDepthModel(DepthModel):
         return input_dict
 
     def _predict(self, input_dict: Dict) -> Dict:
-        indices = input_dict["indices"] # indices from dataset as a list
+        frame_ids = input_dict["frame_ids"]
         depths = []
 
-        for idx in indices:
+        for frame_id in frame_ids:
+            idx = self._dataset.frame_ids.index(frame_id)
             depth_path = self._dataset.gt_depth_paths[idx]
             depth = torch.from_numpy(np.load(depth_path)) # [H , W]
             depths.append(depth.unsqueeze(0)) # [1, H, W]
 
-        depths = torch.cat(depths, dim=0) # [N, 1, H, W]
+        depths = torch.stack(depths, dim=0) # [N, 1, H, W]
 
         return {"depths": depths}
+
+# TODO implement and add the directory structure that we expect
+class PrecomputedDepthModel(DepthModel):
+    """
+    Dummy depth model that loads in precomputed depths from a previous run
+    or a preprocessing step. Expects the file structure to be as specified in
+    the `README.md`
+
+    Expected input and output for `PrecomputedDepthModel.predict()`:
+    `input_dict`: `{"frame_ids":  List[int] frame ids of the images to 'predict' depths by loading in precomputed depths}`
+    `output_dict`: `{"depths": Batched loaded in precomputed depth values [N, 1, H, W]}`
+    """
+    def __init__(self, data_dir: Union[Path, str]):
+        pass
 
 
 # TODO implement, the  torch versions are different and that might cause issues with metric3dv2 and mmseg installations

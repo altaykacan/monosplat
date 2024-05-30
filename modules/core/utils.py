@@ -1,6 +1,21 @@
-from typing import Tuple
+from typing import Tuple, Dict
 
 import torch
+
+from modules.core.interfaces import BaseLogger, BaseReconstructor
+
+
+class Logger(BaseLogger):
+    def __init__(self, reconstructor: BaseReconstructor):
+        self.reconstructor = reconstructor
+
+
+    # TODO implement
+    def log_step(self, state: Dict):
+        pass
+
+
+
 
 def compute_occlusions(flow0: torch.Tensor, flow1: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     """
@@ -40,3 +55,23 @@ def compute_occlusions(flow0: torch.Tensor, flow1: torch.Tensor) -> Tuple[torch.
     mask1[nxy_0[:, 0, :].long(), 0, ((nxy_0[:, 2, :] * .5 + .5) * h).round().long().clamp(0, h-1), ((nxy_0[:, 1, :] * .5 + .5) * w).round().long().clamp(0, w-1)] = 1
 
     return mask0.bool(), mask1.bool()
+
+def unravel_batched_pcd_tensor(batched_tensor: torch.Tensor) -> torch.Tensor:
+    """
+    Unravels a batched tensor representing point clouds and concatenates
+    the samples into the last dimension (representing number of points).
+
+    Expects a `[N, C, num_el]` tensor and returns a  `[C, N * num_el]` tensor.
+    """
+    if len(batched_tensor.shape) != 3:
+        raise ValueError(f"Input is expected to have shape '[N, C, num_el]' but found shape {batched_tensor.shape}")
+
+    N = batched_tensor.shape[0]
+
+    individual_tensors = []
+    for batch_idx in range(N):
+        individual_tensors.append(batched_tensor[batch_idx, ...])
+
+    return torch.cat(individual_tensors, dim=1)
+
+
