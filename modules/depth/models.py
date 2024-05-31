@@ -60,7 +60,7 @@ class Metric3Dv2(DepthModel):
     def load(self):
         # TODO implement own wrapper just in case torch hub is not available
         if self._model is None:
-            if self._backbone == "vit":
+            if self._backbone == "vit_giant":
                 self._model = torch.hub.load('yvanyin/metric3d', 'metric3d_vit_giant2', pretrain=True)
             elif self._backbone == "vit_small":
                 self._model = torch.hub.load('yvanyin/metric3d', 'metric3d_vit_small', pretrain=True)
@@ -145,7 +145,7 @@ class Metric3Dv2(DepthModel):
         # Upsample to original size
         pred_depth = torch.nn.functional.interpolate(pred_depth, (H_origin, W_origin), mode="bilinear")
 
-        avg_intrinsics = (self._transformed_intrinsics[0] + self._transformed_intrinsics[1])
+        avg_intrinsics = (self._transformed_intrinsics[0] + self._transformed_intrinsics[1]) / 2
         canonical_to_real_scale = avg_intrinsics / 1000.0 # 1000.0 is the focal length of the canonical camera
 
         pred_depth = pred_depth * canonical_to_real_scale # now the depth is supposed to be metric

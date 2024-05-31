@@ -1,22 +1,32 @@
+import logging
 from pathlib import Path
 from typing import Union
 
+import torch
 import matplotlib.pyplot as plt
 
-def save_image_torch(tensor, name="debug"):
+log = logging.getLogger(__name__)
+
+def save_image_torch(tensor: torch.Tensor, name: str = "debug", output_dir: Union[str, Path] = "."):
     """
-    Saves a torch tensor representing an image into disk, useful for debugging
+    Saves a torch tensor representing an image into disk, useful for debugging.
     Only saves the first sample in batched input
     """
+    if isinstance(output_dir, str):
+        output_dir = Path(output_dir)
+    if not output_dir.is_dir():
+        logging.warning(f"Output directory for saving tensors '{str(output_dir)}' does not exist. Creating it...")
+        output_dir.mkdir(exist_ok=True, parents=True)
+    output_path = output_dir / Path(f"{name}.png")
+
     if len(tensor.shape) == 4: # ignore rest of the batch
         tensor = tensor[0, :, :, :]
-
     tensor = tensor.squeeze()
 
     if len(tensor.shape) == 3: # rgb image
-        plt.imsave(f"{name}.png", tensor.detach().cpu().permute(1,2,0).numpy())
-    if len(tensor.shape) == 2: # mask or 1-channel image
-        plt.imsave(f"{name}.png", tensor.detach().cpu().numpy())
+        plt.imsave(output_path, tensor.detach().cpu().permute(1, 2,0).numpy())
+    if len(tensor.shape) == 2: # binary mask or 1-channel image
+        plt.imsave(output_path, tensor.detach().cpu().numpy())
 
 
 def find_latest_number_in_dir(dir_path: Union[str, Path]) -> int:

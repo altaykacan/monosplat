@@ -2,6 +2,7 @@ from typing import Tuple, Dict
 
 import torch
 
+from modules.io.utils import save_image_torch
 from modules.core.interfaces import BaseLogger, BaseReconstructor
 
 
@@ -12,7 +13,16 @@ class Logger(BaseLogger):
 
     # TODO implement
     def log_step(self, state: Dict):
-        pass
+        ids = [val.item() for val in state["ids"]]
+
+        # i iterates over the index within the batch
+        for i, frame_id in enumerate(ids):
+            for key, value in state.items():
+                if key == "ids":
+                    continue
+                if key == "depths":
+                    value[i, : , :, :] = 1 / (value[i, : ,: ,:] + 0.0001)
+                save_image_torch(value[i, :, : ,:], name=f"{frame_id}_{key}", output_dir=self.reconstructor.output_dir)
 
 
 

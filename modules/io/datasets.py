@@ -213,7 +213,7 @@ class CustomDataset(BaseDataset):
         (pointing right), y is vertical (pointing down)
 
         Args:
-            `images`: Unbatched tensors to resize and crop of shape `[N, C, H, W]`
+            `images`: Unbatched tensors to resize and crop with shape `[C, H, W]`
         """
         C, H, W = image.shape
 
@@ -261,19 +261,21 @@ class CustomDataset(BaseDataset):
         return len(self.poses)
 
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Returns the preprocessed image and scaled pose with index `idx` from the dataset"""
+    def __getitem__(self, idx: int) -> Tuple[int, torch.Tensor, torch.Tensor]:
+        """Returns the frame id, the preprocessed image, and the scaled pose with index `idx` from the dataset"""
+        frame_id = self.frame_ids[idx]
         image_path = self.image_paths[idx]
         pose = self.poses[idx]
 
         image = Image.open(image_path).convert("RGB")
         image = tv_F.pil_to_tensor(image) # [C, H, W]
+        image = self.preprocess(image)
         scaled_pose = pose.clone()
         scaled_pose[:3, 3] = self.pose_scale * pose[:3, 3]
         image = image.to(self.device)
         scaled_pose = scaled_pose.to(self.device)
 
-        return image, scaled_pose
+        return frame_id, image, scaled_pose
 
 
 class KITTIDataset(CustomDataset):

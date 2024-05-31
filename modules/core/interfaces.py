@@ -94,7 +94,7 @@ class BaseReconstructor(ABC):
         pass
 
     @abstractmethod
-    def step(self, images, poses):
+    def step(self, ids, images, poses):
         """One step of the reconstruction process. Specific to reconstructors"""
         pass
 
@@ -129,9 +129,8 @@ class BaseLogger(ABC):
         pass
 
     @abstractmethod
-    def log_step(self):
+    def log_step(self, state: Dict):
         pass
-
 
 
 class BaseDataset(ABC):
@@ -152,5 +151,5 @@ class BaseDataset(ABC):
         pass
 
     @abstractmethod
-    def __getitem__(self, idx: int) -> Tuple: # TODO what should it return?
+    def __getitem__(self, idx: int) -> Tuple[int, torch.Tensor, torch.Tensor]:
         pass

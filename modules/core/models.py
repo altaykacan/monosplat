@@ -166,6 +166,7 @@ class Backprojector(BaseBackprojector):
 
     def compute_backprojection_masks(self, images: torch.Tensor, depths: torch.Tensor) -> torch.Tensor:
         masks = torch.ones_like(depths).bool()
+        device = depths.device
         N, C, H, W = masks.shape # C is 1
 
         # Region of interest as [top, bottom, left, right] edge indices
@@ -178,15 +179,15 @@ class Backprojector(BaseBackprojector):
             masks[:, :, :, roi[3] :] = False
 
         # Maximum and minimum depths for backprojection
-        max_d = self.cfg.get("max_d", 100.0)
-        min_d = self.cfg.get("min_d", 0.9)
+        max_d = self.cfg.get("max_d", 50.0)
+        min_d = self.cfg.get("min_d", 0.0)
 
         masks = masks & (depths < max_d) & (depths > min_d)
 
         # Random dropout
-        dropout = self.cfg.get("dropout", 0.0)
+        dropout = self.cfg.get("dropout", 0.9)
         if dropout > 0.0:
-            masks = masks & (torch.rand((N, C, H, W)) > dropout)
+            masks = masks & (torch.rand((N, C, H, W)).to(device) > dropout)
 
         return masks
 
