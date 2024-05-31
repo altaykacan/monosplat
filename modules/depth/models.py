@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from typing import Dict, List, Tuple, Union
 
@@ -8,6 +9,7 @@ import numpy as np
 from modules.io.datasets import KITTI360Dataset
 from modules.core.interfaces import BaseModel
 
+log = logging.getLogger(__name__)
 
 class DepthModel(BaseModel):
     """
@@ -35,6 +37,12 @@ class Metric3Dv2(DepthModel):
     def __init__(self, intrinsics: Tuple, depth_pred_size: Tuple = (), backbone="convnext", device: str = None):
         self._intrinsics = intrinsics
         self._transformed_intrinsics = None
+
+        # ViT backbone needs bfloat16 support on GPU (CUDA compute capability >= 8.0)
+        if not torch.cuda.is_bf16_supported() and "vit" in backbone:
+            log.warning(f"Your GPU does not support bfloat16 (needs CUDA compute capability >= 8.0), switching to ConvNeXt backbone for Metric3Dv2!")
+            backbone = "convnext"
+
 
         # Suggestions from the authors for vit model: (616, 1064), for convnext model: (544, 1216)
         if depth_pred_size != ():

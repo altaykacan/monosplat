@@ -1,5 +1,6 @@
 """Has implementation of standard map classes for the framework"""
-from typing import Dict
+from pathlib import Path
+from typing import Dict, Union
 
 import torch
 import numpy as np
@@ -109,5 +110,7 @@ class PointCloud(BaseMap):
 
         self.pcd = pcd
 
-    def save(self, filename="map.ply"):
+    def save(self, filename: Union[Path, str] = "map.ply"):
+        if isinstance(filename, Path):
+            filename = str(filename)
         o3d.io.write_point_cloud(filename, self.pcd.to_legacy())

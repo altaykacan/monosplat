@@ -1,4 +1,12 @@
+import os
+import sys
+
 import torch
+
+# Needed to import custom code
+current_dir = os.path.dirname(os.path.realpath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.insert(0, parent_dir)
 
 from modules.io.datasets import CustomDataset, KITTIDataset, KITTI360Dataset
 from modules.depth.models import Metric3Dv2
@@ -16,7 +24,7 @@ target_size = [368, 1224]
 dataset = KITTIDataset(image_dir, pose_file, pose_scale, orig_intrinsics, orig_size, target_size, start=0, end=200)
 depth_model = Metric3Dv2(dataset.intrinsics, backbone="vit_giant")
 backprojector = Backprojector(cfg={"dropout":0.99}, intrinsics=dataset.intrinsics)
-recon = SimpleReconstructor(dataset, backprojector, depth_model, cfg={"batch_size": 2, "output_dir": "debug"})
+recon = SimpleReconstructor(dataset, backprojector, depth_model, cfg={"batch_size": 2, "output_dir": "tests/test_results/debug"})
 recon.run()
 
 print("done!")

@@ -1,5 +1,6 @@
 """Has implementations of standard models used in the framework"""
 from typing import Dict, List, Union
+from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader
@@ -25,7 +26,7 @@ class SimpleReconstructor(BaseReconstructor):
 
 
     def parse_config(self, cfg: Dict):
-        self.output_dir = cfg.get("output_dir", ".")
+        self.output_dir = Path(cfg.get("output_dir", "."))
         self.batch_size = cfg.get("batch_size", 2)
         self.use_every_nth = cfg.get("use_every_nth", 1)
 
@@ -34,7 +35,7 @@ class SimpleReconstructor(BaseReconstructor):
             self.step(ids, images, poses)
 
         self.map.postprocess()
-        self.map.save("map.ply")
+        self.map.save(self.output_dir / Path("map.ply"))
 
     def step(self, ids: torch.Tensor, images: torch.Tensor, poses: torch.Tensor):
         depth_preds = self.depth_model.predict({"images": images})

@@ -10,8 +10,6 @@ class Logger(BaseLogger):
     def __init__(self, reconstructor: BaseReconstructor):
         self.reconstructor = reconstructor
 
-
-    # TODO implement
     def log_step(self, state: Dict):
         ids = [val.item() for val in state["ids"]]
 
