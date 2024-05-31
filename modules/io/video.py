@@ -14,12 +14,7 @@ def extract_frames(video_path: Union[Path, str], output_dir: Union[Path, str], f
     if isinstance(output_dir, str):
         output_dir = Path(output_dir)
 
-    if file_format == "png":
-        output_path = output_dir / Path("images")
-    elif file_format == "jpg":
-        output_path = output_dir / Path("images_jpg")
-
-    output_path.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     # Code heavily inspired from the stack overflow answer: https://stackoverflow.com/questions/33311153/python-extracting-and-saving-video-frames
     vidcap = cv2.VideoCapture(str(video_path))
@@ -31,5 +26,7 @@ def extract_frames(video_path: Union[Path, str], output_dir: Union[Path, str], f
         sys.stdout.write(f"Reading frame {count}...")
         sys.stdout.flush()
 
-        file_path = output_path / Path(f"{count:0{PADDED_IMG_NAME_LENGTH}}.{file_format}")
+        file_path = output_dir / Path(f"{count:0{PADDED_IMG_NAME_LENGTH}}.{file_format}")
         cv2.imwrite(str(file_path), image)
+        success, image = vidcap.read()
+        count += 1

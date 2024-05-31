@@ -1,4 +1,5 @@
 import logging
+import shutil
 from pathlib import Path
 from typing import Union
 
@@ -59,25 +60,36 @@ def find_latest_number_in_dir(dir_path: Union[str, Path]) -> int:
 def ask_to_clear_dir(dir_path: Union[str, Path]) -> bool:
     """
     Asks the user to delete existing files in a directory if there are existing
-    files. Useful for scripts that compute some values and save them for later
-    usage.
+    files. If the user types in 'y' the files are deleted.
+    Useful for scripts that compute some values and save them for later usage.
+    Returns a boolean representing whether the operation should be continued
+    or not.
     """
     if isinstance(dir_path, str):
         dir_path = Path(dir_path)
 
     not_empty = any(dir_path.iterdir())
+    should_continue = True
 
     if not_empty:
         while True:
             answer = input(f"The directory you specified {str(dir_path)} is not empty, do you want to delete existing files before continuing? [y/n]: ")
 
             if answer.lower() == "y":
-                return True
+                print(f"Deleting existing files at {str(dir_path)}...")
+                for file in dir_path.iterdir():
+                    if file.is_file():
+                        file.unlink()
+                should_continue = True
+                break
             elif answer.lower() == "n":
-                print(f"Not deleting existing files at {str(dir_path)}...")
-                return False
+                print(f"Not deleting existing files at {str(dir_path)} and aborting...")
+                should_continue = False
+                break
 
             print("Please type 'y' or 'n'")
+
+    return should_continue
 
 
 
