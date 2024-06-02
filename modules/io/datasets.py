@@ -14,6 +14,7 @@ from modules.core.interfaces import BaseDataset
 
 log = logging.getLogger(__name__)
 
+
 class CustomDataset(BaseDataset):
     """
     Default CustomDataset implementation. Expects poses to be saved in TUM RGB-D
@@ -97,7 +98,6 @@ class CustomDataset(BaseDataset):
 
         return pose
 
-
     def load_image_paths_and_poses(self):
         """
         Fetches poses from `self.pose_path` and the corresponding image paths
@@ -132,7 +132,6 @@ class CustomDataset(BaseDataset):
             raise RuntimeError(f"Different number of poses and images has been read, please check your pose file at '{self.pose_path}' and your images at '{self.image_dir}'")
 
         return None
-
 
     def compute_target_intrinsics(self):
         """
@@ -203,7 +202,6 @@ class CustomDataset(BaseDataset):
 
         return None
 
-
     def preprocess(self, image: torch.Tensor) -> torch.Tensor:
         """
         Resize and crop the given image using torchvision.
@@ -243,9 +241,24 @@ class CustomDataset(BaseDataset):
         return resized_image
 
     def truncate_paths_and_poses(self):
+        start_idx_found = False
+        end_idx_found = False
         # self.start and self.end are frame indices but we need the index in the lists
-        self.start_idx = self.frame_ids.index(self.start)
-        self.end_idx = self.frame_ids.index(self.end) if self.end != -1 else -1
+        while not start_idx_found:
+            try:
+                self.start_idx = self.frame_ids.index(self.start)
+                start_idx_found = True
+            except ValueError:
+                log.warning(f"The specified dataset start frame {self.start} can't be found in frame_ids, looking for next possible frame id")
+                self.start += 1
+
+        while not end_idx_found:
+            try:
+                self.end_idx = self.frame_ids.index(self.end) if self.end != -1 else -1
+                end_idx_found = True
+            except ValueError:
+                log.warning(f"The specified dataset end frame {self.end} can't be found in frame_ids, looking for next possible frame id")
+                self.end -= 1
 
         if self.end == -1:
             self.frame_ids = self.frame_ids[self.start_idx:]
@@ -256,10 +269,8 @@ class CustomDataset(BaseDataset):
             self.image_paths = self.image_paths[self.start_idx:self.end_idx]
             self.poses = self.poses[self.start_idx:self.end_idx]
 
-
     def __len__(self) -> int:
         return len(self.poses)
-
 
     def __getitem__(self, idx: int) -> Tuple[int, torch.Tensor, torch.Tensor]:
         """Returns the frame id, the preprocessed image, and the scaled pose with index `idx` from the dataset"""
@@ -280,12 +291,10 @@ class CustomDataset(BaseDataset):
 
 class KITTIDataset(CustomDataset):
     def __init__(self, image_dir: Union[Path, str], pose_path: Union[Path, str], pose_scale: float, orig_intrinsics: Tuple, orig_size: Tuple, target_size: Tuple, start: int = 0, end: int = -1):
-        self.frame_counter = 0 # KITTI data has poses for every frame and no frame id in poses.txt
-
+        # KITTI data has poses for every frame and no frame id in poses.txt, so we need to count it
+        self.frame_counter = 0
         super().__init__(image_dir, pose_path, pose_scale, orig_intrinsics, orig_size, target_size, start, end)
 
-
-    # TODO implement, do the KITTI ground truth poses all not have the frame ids? in that case we have to just count the frames
     def parse_image_path_and_frame_id(self, cols: List[str]) -> Tuple[Path, int]:
         frame_id = self.frame_counter
         image_name = f"{frame_id:0{PADDED_IMG_NAME_LENGTH}}.png"
@@ -294,7 +303,6 @@ class KITTIDataset(CustomDataset):
         self.frame_counter += 1
 
         return image_path, frame_id
-
 
     def parse_pose(self, cols: List[str]) -> torch.Tensor:
         """
@@ -309,9 +317,6 @@ class KITTIDataset(CustomDataset):
         return pose
 
 
-
-# TODO implement so we can evaluate depth predictions
-# with ground truth results
 class KITTI360Dataset(CustomDataset):
     """
     Dataset that is used to load in and work with the ground truth data (pose
@@ -344,14 +349,15 @@ class KITTI360Dataset(CustomDataset):
         self.gt_depth_paths = []
 
         gt_depth_dir_exists = self.gt_depth_dir.is_dir()
-        gt_depth_dir_is_empty = not any(self.gt_depth_dir.iterdir())
+
+        if gt_depth_dir_exists:
+            gt_depth_dir_is_empty = not any(self.gt_depth_dir.iterdir())
 
         if not gt_depth_dir_exists or gt_depth_dir_is_empty:
-            log.info(f"The ground truth depth files for KITTI360 at {self.gt_depth_path} do not exist. Reading and saving all values for {sequence} in that directory. This might take a while...")
+            log.info(f"The ground truth depth files for KITTI360 at {self.gt_depth_dir} do not exist. Reading and saving all values for {sequence} in that directory. This might take a while...")
             projectVeloToImage(cam_id, seq, KITTI360_DIR, max_d=200, image_name_padding=PADDED_IMG_NAME_LENGTH)
 
         self.load_gt_depth_paths()
-
 
     def load_gt_depth_paths(self):
         # frame_ids are already truncated, no need to do it again for depths
@@ -364,7 +370,6 @@ class KITTI360Dataset(CustomDataset):
             self.gt_depth_paths.append(depth_path)
 
         return None
-
 
     def parse_pose(self, cols: List[str]) -> torch.Tensor:
         """

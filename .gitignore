@@ -16,6 +16,7 @@ ipython_config.py
 
 # Framework specific
 checkpoints/*.pth
+evaluation/eval_results/*
 
 
 # Debug

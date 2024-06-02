@@ -1,1 +1,104 @@
 """Contains helper functions and classes to compute standard metrics"""
+from typing import Dict, Union, Callable
+
+import torch
+
+
+class AverageMetric:
+    """
+    Class to keep track of averages of a given metric that is computed with
+    a function `metric_fn` that expects batched predicted and ground truth
+    depths as input and returns a float value.
+
+    Implementation inspired from Metric3Dv2 authors: https://github.com/YvanYin/Metric3D/blob/main/mono/utils/avg_meter.py
+    """
+    def __init__(self, metric_fn: Callable):
+        self.metric_fn = metric_fn
+        self.reset()
+
+    def reset(self):
+        self._val = 0.0
+        self._sum = 0.0
+        self._count = 0.0
+        self.avg = 0.0
+
+    def update(self, depth: torch.Tensor, gt_depth: torch.Tensor):
+        if len(depth.shape) != 4:
+            raise ValueError(f"Expected '[N, C, H, W]' batched input for predictions but got {depth.shape} shape")
+        if len(gt_depth.shape) != 4:
+            raise ValueError(f"Expected '[N, C, H, W]' batched input for labels but got {depth.shape} shape")
+
+        self._val, err = self.metric_fn(depth, gt_depth) # err is to visualize errors
+        self._sum = self._sum + self._val
+        self._count += 1 # counts batches, not samples
+        self.avg = self._sum / self._count
+        return err
+
+
+def compute_absrel(depth: torch.Tensor, gt_depth: torch.Tensor):
+    err = torch.zeros_like(depth)
+    mask = gt_depth > 0 # also avoids division by zero
+    diff = torch.abs(depth[mask] - gt_depth[mask]) / gt_depth[mask]
+    err[mask]= diff
+    result = torch.mean(diff) # mean over all pixels in batch
+    return result, err
+
+
+def compute_sqrel(depth: torch.Tensor, gt_depth: torch.Tensor):
+    err = torch.zeros_like(depth)
+    mask = gt_depth > 0
+    diff = ((depth[mask] - gt_depth[mask]) ** 2) /  gt_depth[mask]
+    err[mask] = diff
+    result = torch.mean(diff)
+    return result, err
+
+
+# TODO do we take the sqrt of the total mean or do we take the mean of the sqrt values individually?
+# i.e. is the sum over all pixels for a given image or is it ALL valid pixels in the WHOLE dataset
+def compute_rmse(depth: torch.Tensor, gt_depth: torch.Tensor):
+    N, C, H, W = depth.shape
+    err = torch.zeros_like(depth) # [N, 1, H, W]
+    diff = 0.0
+
+    # Due to the square root, taking the mean over batched preds in one go doesn't work
+    for batch_idx in range(N):
+        depth_i = depth[batch_idx, :, :, :] # [1, H, W]
+        gt_depth_i = gt_depth[batch_idx, : ,:, :] # [1, H, W]
+        mask = gt_depth_i > 0 # per-batch element masking
+        err[batch_idx][mask] = torch.sqrt((depth_i[mask] - gt_depth_i[mask])**2) # tensor
+        diff += torch.sqrt(torch.mean((depth_i[mask] - gt_depth_i[mask])**2)) # scalar
+
+    result = diff / N # take the mean over the current batch too
+    return result, err
+
+
+def compute_rmse_log(depth: torch.Tensor, gt_depth: torch.Tensor):
+    # Use log base 10 like Metric3D and add small number for numerical stability
+    return compute_rmse(torch.log10(depth + 1e-10), torch.log10(gt_depth + 1e-10))
+
+
+def accuracy_threshold(depth: torch.Tensor, gt_depth: torch.Tensor, i: int):
+    mask = gt_depth > 0
+    err = torch.zeros_like(depth) # [N, 1, H, W]
+    depth_m = depth[mask]
+    gt_depth_m = gt_depth[mask]
+
+    diff = torch.maximum(depth_m / gt_depth_m, gt_depth_m / depth_m)
+    err[mask] = diff
+    result = torch.mean((diff < 1.25**i).float()) # mean over all the pixels in batch
+    return result, err
+
+
+def compute_accuracy_threshold_1(depth: torch.Tensor, gt_depth: torch.Tensor):
+    return accuracy_threshold(depth, gt_depth, i=1)
+
+
+def compute_accuracy_threshold_2(depth: torch.Tensor, gt_depth: torch.Tensor):
+    return accuracy_threshold(depth, gt_depth, i=2)
+
+
+def compute_accuracy_threshold_3(depth: torch.Tensor, gt_depth: torch.Tensor):
+    return accuracy_threshold(depth, gt_depth, i=3)
+
+
+
