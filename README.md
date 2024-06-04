@@ -45,3 +45,12 @@ pip install hydra-core --upgrade # for configs
 pip install moviepy # for video creation
 
 ```
+
+### Thanks to the Authors of these great repositories:
+- evo
+- metric3d
+- MMseg
+- unidepth
+- ...
+
+- [] TODO: Add links!
