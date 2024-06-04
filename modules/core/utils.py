@@ -23,8 +23,6 @@ class Logger(BaseLogger):
                 save_image_torch(value[i, :, : ,:], name=f"{frame_id}_{key}", output_dir=self.reconstructor.output_dir)
 
 
-
-
 def compute_occlusions(flow0: torch.Tensor, flow1: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Function to generate occlusion masks by checking forward and backward

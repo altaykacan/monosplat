@@ -1,3 +1,4 @@
+"""Contains dataset implementations that store data related information and can be iterated over"""
 import logging
 from pathlib import Path
 from typing import Union, Tuple, List
@@ -55,14 +56,24 @@ class CustomDataset(BaseDataset):
         self.truncate_paths_and_poses() # truncates the lists, populates self.start_idx and self.end_idx
 
     def parse_image_path_and_frame_id(self, cols: List[str]) -> Tuple[Path, int]:
-        # Convert string to float first to deal with scientific notation
-        frame_id = int(float(cols[0]))
+        frame_id = self.parse_frame_id(cols)
         image_name = f"{frame_id:0{PADDED_IMG_NAME_LENGTH}}.png"
         image_path = Path(self.image_dir, image_name)
 
         return image_path, frame_id
 
-    def parse_pose(self, cols: List[str]) -> torch.Tensor:
+    @classmethod
+    def parse_frame_id(cls, cols: List[str]) -> int:
+        """
+        Returns the frame id (or timestamp) as an integer, return None to
+        enumerate frames starting from 0
+        """
+        # First convert to float to deal with scientific notation if it exists
+        frame_id = int(float(cols[0]))
+        return frame_id
+
+    @classmethod
+    def parse_pose(cls, cols: List[str]) -> torch.Tensor:
         """
         Parses a row of the pose file. The input is expected to be already
         split up using the whitespaces in between the columns.
@@ -113,7 +124,7 @@ class CustomDataset(BaseDataset):
                 continue
             cols = pose_row.split(" ")
 
-            image_path, timestamp = self.parse_image_path_and_frame_id(cols)
+            image_path, frame_id = self.parse_image_path_and_frame_id(cols)
 
             if not image_path.exists():
                 log.warning(f"Image {image_path} specified in pose file can't be found, skipping this frame")
@@ -121,12 +132,15 @@ class CustomDataset(BaseDataset):
 
             pose = self.parse_pose(cols)
 
-            self.frame_ids.append(timestamp)
-            self.image_paths.append(image_path)
-            self.poses.append(pose)
+            if frame_id in self.frame_ids:
+                log.warning(f"Frame id {frame_id} has already been read. Skipping adding the associated images and poses.")
+            else:
+                self.frame_ids.append(frame_id)
+                self.image_paths.append(image_path)
+                self.poses.append(pose)
 
         if len(self.poses) == 0:
-            raise RuntimeError(f"No poses have been read, please check your pose file at '{self.pose_path}'")
+            raise RuntimeError(f"No poses have been read, please check your pose file at '{self.pose_path}'. Tip: Make sure the number of zeros padded for image file names (in configs/data.py) matches your dataset")
 
         if len(self.poses) != len(self.image_paths):
             raise RuntimeError(f"Different number of poses and images has been read, please check your pose file at '{self.pose_path}' and your images at '{self.image_dir}'")
@@ -304,7 +318,13 @@ class KITTIDataset(CustomDataset):
 
         return image_path, frame_id
 
-    def parse_pose(self, cols: List[str]) -> torch.Tensor:
+    @classmethod
+    def parse_frame_id(cls, cols: List[str]) -> None:
+        """Dummy method to keep the class interfaces consistent."""
+        return None
+
+    @classmethod
+    def parse_pose(cls, cols: List[str]) -> torch.Tensor:
         """
         Assumes the pose file has rows saved in the KITTI format, 12 numbers
         representing the 3x4 transformation matrix from camera to world coordinates
@@ -371,7 +391,8 @@ class KITTI360Dataset(CustomDataset):
 
         return None
 
-    def parse_pose(self, cols: List[str]) -> torch.Tensor:
+    @classmethod
+    def parse_pose(cls, cols: List[str]) -> torch.Tensor:
         """
         Parses a row of the pose file. The input is expected to be already
         split up using the whitespaces in between the columns.
@@ -388,5 +409,20 @@ class KITTI360Dataset(CustomDataset):
         pose = torch.tensor(transform, requires_grad=False).double().reshape(4, 4)
 
         return pose
+
+class TUMRGBDDataset(CustomDataset):
+    @classmethod
+    def parse_frame_id(cls, cols: List[str]) -> float:
+        """
+        Returns the frame id (or timestamp) as a float, return None to
+        enumerate frames starting from 0
+        """
+        # First convert to float to deal with scientific notation if it exists
+        frame_id = float(cols[0])
+        return frame_id
+
+# TODO implement, probably just need the parse_pose and parse_frame_id class methods
+class COLMAPDataset(CustomDataset):
+    pass
 
 

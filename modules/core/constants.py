@@ -20,3 +20,16 @@ CITYSCAPES_LABELS = (
     "motorcycle",
     "bicycle",
 )
+
+
+# Colors for trajectory plotting
+TRAJECTORY_COLORS = (
+    "blue",
+    "black",
+    "magenta",
+    "cyan",
+    "yellow",
+    "purple",
+    "pink",
+    "brown",
+)

@@ -1,11 +1,12 @@
+"""Contains functions to align two trajectories"""
 from typing import Tuple
 
 import torch
 import numpy as np
 
-# Code taken from, evo https://github.com/MichaelGrupp/evo/blob/9ecf31f3ffbba15d6521d767dd654cbf0a86732f/evo/core/geometry.py
-def umeyama_alignment(x: np.ndarray, y: np.ndarray,
-                      with_scale: bool = False) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+# Code taken from evo https://github.com/MichaelGrupp/evo/blob/9ecf31f3ffbba15d6521d767dd654cbf0a86732f/evo/core/geometry.py
+def umeyama_alignment(x: torch.Tensor, y: torch.Tensor,
+                      with_scale: bool = False) -> Tuple[torch.Tensor, torch.Tensor, float]:
     """
     Computes the least squares solution parameters of an Sim(m) matrix
     that minimizes the distance between a set of registered points.
@@ -34,6 +35,11 @@ def umeyama_alignment(x: np.ndarray, y: np.ndarray,
     You should have received a copy of the GNU General Public License
     along with evo.  If not, see <http://www.gnu.org/licenses/>.
     """
+    # Adapted to accept and return torch tensors, the logic is the same
+    device = x.device
+    x = x.detach().cpu().numpy()
+    y = y.detach().cpu().numpy()
+
     if x.shape != y.shape:
         raise ValueError("data matrices must have the same shape")
 
@@ -72,5 +78,10 @@ def umeyama_alignment(x: np.ndarray, y: np.ndarray,
     # scale & translation, eq. 42 and 41
     c = 1 / sigma_x * np.trace(np.diag(d).dot(s)) if with_scale else 1.0
     t = mean_y - np.multiply(c, r.dot(mean_x))
+
+    # Return torch tensors on the same device
+    r = torch.from_numpy(r).double().to(device)
+    t = torch.from_numpy(t).double().view(3, 1).to(device) # reshape for broadcasting
+    c = float(c) # python floats are float64's, pytorch floats are float32's
 
     return r, t, c

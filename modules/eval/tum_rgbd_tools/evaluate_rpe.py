@@ -61,10 +61,10 @@ def transform44(l):
     nq = numpy.dot(q, q)
     if nq < _EPS:
         return numpy.array((
-        (                1.0,                 0.0,                 0.0, t[0])
-        (                0.0,                 1.0,                 0.0, t[1])
-        (                0.0,                 0.0,                 1.0, t[2])
-        (                0.0,                 0.0,                 0.0, 1.0)
+        (                1.0,                 0.0,                 0.0, t[0]),
+        (                0.0,                 1.0,                 0.0, t[1]),
+        (                0.0,                 0.0,                 1.0, t[2]),
+        (                0.0,                 0.0,                 0.0, 1.0),
         ), dtype=numpy.float64)
     q *= numpy.sqrt(2.0 / nq)
     q = numpy.outer(q, q)
@@ -203,7 +203,7 @@ def rotations_along_trajectory(traj,scale):
     return distances
 
 
-def evaluate_trajectory(traj_gt,traj_est,param_max_pairs=10000,param_fixed_delta=False,param_delta=1.00,param_delta_unit="s",param_offset=0.00,param_scale=1.00):
+def evaluate_trajectory_rpe(traj_gt,traj_est,param_max_pairs=10000,param_fixed_delta=False,param_delta=1.00,param_delta_unit="s",param_offset=0.00,param_scale=1.00):
     """
     Compute the relative pose error between two trajectories.
 
@@ -331,7 +331,7 @@ if __name__ == '__main__':
     traj_gt = read_trajectory(args.groundtruth_file)
     traj_est = read_trajectory(args.estimated_file)
 
-    result = evaluate_trajectory(traj_gt,
+    result = evaluate_trajectory_rpe(traj_gt,
                                  traj_est,
                                  int(args.max_pairs),
                                  args.fixed_delta,

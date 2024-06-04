@@ -24,7 +24,6 @@ class SimpleReconstructor(BaseReconstructor):
         self.logger = Logger(self)
         self.dataloader = DataLoader(self.dataset, self.batch_size, shuffle=False, drop_last=False)
 
-
     def parse_config(self, cfg: Dict):
         self.output_dir = Path(cfg.get("output_dir", "."))
         self.batch_size = cfg.get("batch_size", 2)

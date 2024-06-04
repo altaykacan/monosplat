@@ -1,3 +1,4 @@
+"""Contains code related to processing videos"""
 import sys
 from typing import Union
 from pathlib import Path

@@ -2,6 +2,7 @@
 Script for evaluating depth model predictions by comparing
 dense depth predictions with ground truth KITTI360 data
 """
+import json
 import argparse
 import logging
 import datetime
@@ -12,11 +13,11 @@ from typing import NamedTuple
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 
-from configs.data import KITTI360_DIR
+from configs.data import KITTI360_DIR, EVAL_DECIMAL_POINTS
 from modules.io.datasets import KITTI360Dataset
 from modules.depth.models import Metric3Dv2, KITTI360DepthModel
 from modules.eval.metrics import (
-    AverageMetric,
+    AverageDepthMetric,
     compute_absrel,
     compute_sqrel,
     compute_rmse,
@@ -38,22 +39,22 @@ def main(args):
     model = None
     gt_loader = None
 
-    output_dir.mkdir(parents=True, exist_ok=True)
 
     # Setup logging
     now = datetime.datetime.now()
-    timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
-    log_path = output_dir.absolute() / Path(f"log_{timestamp}.txt")
-
-    logging.basicConfig(filename=log_path, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-    logging.info(f"Arguments: \n{pprint.pformat(args)}")
+    timestamp = now.strftime("%m-%d_%H-%M-%S")
+    output_dir = output_dir / Path(f"depth_{timestamp}")
+    log_path = output_dir.absolute() / Path("log.txt")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(filename=log_path, level=logging.INFO, format='%(levelname)s - %(message)s')
+    logging.info(f"Arguments: \n{json.dumps(vars(args), indent=4)}")
 
     # Used metrics which are averaged over sequences
     metrics = {
-        "absrel": AverageMetric(compute_absrel),
-        "sqrel": AverageMetric(compute_sqrel),
-        "rmse": AverageMetric(compute_rmse),
-        "acc_1": AverageMetric(compute_accuracy_threshold_1)
+        "absrel": AverageDepthMetric(compute_absrel),
+        "sqrel": AverageDepthMetric(compute_sqrel),
+        "rmse": AverageDepthMetric(compute_rmse),
+        "acc_1": AverageDepthMetric(compute_accuracy_threshold_1)
     }
 
     # Nested dictionary to store results, keys are metrics with dictionaries for sequences
@@ -89,7 +90,7 @@ def main(args):
         # Record results and reset metrics
         for metric_name, metric in metrics.items():
             logging.info(f"Sequence {seq}, {metric_name}: {metric.avg}")
-            results[metric_name][f"seq_{seq}"] = round(metric.avg.item(), 3) # 3 decimal points
+            results[metric_name][f"seq_{seq}"] = round(metric.avg, EVAL_DECIMAL_POINTS)
             metric.reset()
 
     # Compute averages over sequences for each metric
@@ -123,10 +124,10 @@ if __name__=="__main__":
     class DebugArgs(NamedTuple):
         sequences = [0,3,4,5,6,7,9,10]
         cam_id = 0
-        depth_model = "gt_depth"
-        model_variant="vit_giant"
+        depth_model = "metric3d"
+        model_variant="vit_small"
         num_images = 100
-        batch_size = 8
+        batch_size = 4
         output="./evaluation/eval_results"
     def __repr__(self):
         return (f"DebugArgs(sequences={self.sequences}, cam_id={self.cam_id}, "

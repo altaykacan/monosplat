@@ -11,6 +11,7 @@ from modules.core.interfaces import BaseModel
 
 log = logging.getLogger(__name__)
 
+
 class DepthModel(BaseModel):
     """
     Depth model parent class. Implement `__init__()`, `_preprocess()`,
@@ -25,6 +26,7 @@ class DepthModel(BaseModel):
 
     def _check_output(self, output_dict: Dict):
         pass
+
 
 class Metric3Dv2(DepthModel):
     """
@@ -64,7 +66,6 @@ class Metric3Dv2(DepthModel):
         else:
             self._device = device
 
-
     def load(self):
         # TODO implement own wrapper just in case torch hub is not available
         if self._model is None:
@@ -80,12 +81,10 @@ class Metric3Dv2(DepthModel):
             self._model.cuda().eval()
         return None
 
-
     def unload(self):
         self._model = None
         torch.cuda.empty_cache()
         return None
-
 
     def _preprocess(self, input_dict: Dict) -> Dict:
         # Code heavily inspired from original metric3dv2 authors: https://github.com/YvanYin/Metric3D/blob/main/hubconf.py#L122
@@ -161,6 +160,7 @@ class Metric3Dv2(DepthModel):
 
         return {"depths": pred_depth}
 
+
 class KITTI360DepthModel(DepthModel):
     """
     Dummy Depth Model that reads in the ground truth data from KITTI360
@@ -170,8 +170,12 @@ class KITTI360DepthModel(DepthModel):
     `output_dict`: `{"depths": Batched loaded in ground truth depth values [N, 1, H, W]}`
 
     """
-    def __init__(self, dataset: KITTI360Dataset):
+    def __init__(self, dataset: KITTI360Dataset, device: str = None):
         self._dataset = dataset
+        if device is None:
+            self._device ="cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            self._device = device
 
     def load(self):
         pass
@@ -189,12 +193,13 @@ class KITTI360DepthModel(DepthModel):
         for frame_id in frame_ids:
             idx = self._dataset.frame_ids.index(frame_id)
             depth_path = self._dataset.gt_depth_paths[idx]
-            depth = torch.from_numpy(np.load(depth_path)) # [H , W]
+            depth = torch.from_numpy(np.load(depth_path)).float() # [H , W]
             depths.append(depth.unsqueeze(0)) # [1, H, W]
 
-        depths = torch.stack(depths, dim=0) # [N, 1, H, W]
+        depths = torch.stack(depths, dim=0).to(self._device) # [N, 1, H, W]
 
         return {"depths": depths}
+
 
 # TODO implement and add the directory structure that we expect
 class PrecomputedDepthModel(DepthModel):
