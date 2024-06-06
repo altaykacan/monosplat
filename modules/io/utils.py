@@ -1,10 +1,12 @@
 """Utility functions for data and input-output related operations"""
 import logging
 import shutil
+import json
 from pathlib import Path
 from typing import Union, List, Callable, Tuple
 
 import torch
+import numpy as np
 import matplotlib.pyplot as plt
 
 from configs.data import SUPPORTED_DATASETS
@@ -216,4 +218,53 @@ def read_poses_from_stamps(pose_path: Union[Path, str], matching_stamps: List[in
 
     poses = torch.stack(poses, dim=0)
     return poses
+
+
+def read_deepscenario_sparse_cloud(filename: Union[str, Path]) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Reads in the ground truth reconstructions for the custom data from DeepScenario.
+    Returns the `xyz` and `rgb` values as torch tensors with shape
+    `[3, num_points]` to then be converted to any point cloud format.
+
+    The input is expected to be a path to a file formatted as a json file
+    as:
+    ```
+    [
+      {
+        "shots": {...},
+        "cameras": {...},
+        "points":{
+            "point_id": {
+                "color": [R, G, B],
+                "coordinates": [x, y, z],
+            },
+            ...
+        },
+        "biases": {...},
+        "rig_cameras": {...},
+        "rig_instances": {...},
+        "reference_lla": {...},
+      }
+    ]
+    ```
+    """
+    if isinstance(filename, str):
+        filename = Path(filename)
+
+    with open(filename, "rb") as file:
+        data = json.load(file) # might take some time, if the point cloud is too large use ijson
+
+    points = data[0]["points"] # the whole json is saved as a list so we need to access the first element
+    xyz = []
+    rgb = []
+    for point_id in points.keys():
+        coords = points[point_id]["coordinates"] # both are lists with three elements
+        colors = points[point_id]["color"]
+        xyz.append(coords)
+        rgb.append(colors)
+    xyz = torch.tensor(xyz, dtype=torch.double).T # [3, num_points]
+    rgb = torch.tensor(rgb, dtype=torch.uint8).T
+
+    return xyz, rgb
+
 

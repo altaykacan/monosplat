@@ -44,7 +44,6 @@ class PointCloud(BaseMap):
     def has_normals(self):
         return self.normals is not None
 
-
     def increment(self, xyz: torch.Tensor, rgb: torch.Tensor = None, normals: torch.Tensor = None):
         # Deal with batched input, convert from [N, C, num_el] to [C, N * num_el]
         if len(xyz.shape) == 3:
@@ -82,7 +81,6 @@ class PointCloud(BaseMap):
 
         return None
 
-
     def transform(self, T: torch.Tensor):
         R = T[:3, :3] # [3, 3]
         t = T[:3, 3].unsqueeze(1) # [3, 1], already scaled in the dataset
@@ -93,7 +91,7 @@ class PointCloud(BaseMap):
         return None
 
     def postprocess(self):
-        # Convert to open3d cloud, it expects [N, 3] numpy arrays
+        # Convert to open3d cloud, open3d expects [N, 3] numpy arrays
         pcd = o3d.t.geometry.PointCloud()
         pcd.point.positions = self.xyz.permute(1, 0).cpu().numpy()
 
@@ -110,7 +108,11 @@ class PointCloud(BaseMap):
 
         self.pcd = pcd
 
-    def save(self, filename: Union[Path, str] = "map.ply"):
-        if isinstance(filename, Path):
-            filename = str(filename)
-        o3d.io.write_point_cloud(filename, self.pcd.to_legacy())
+    def save(self, filename: Union[Path, str] = "map.ply", output_dir: Union[Path, str] = "."):
+        if isinstance(filename, str):
+            filename = Path(filename)
+        if isinstance(output_dir, str):
+            output_dir = Path(output_dir)
+
+        file_path = str(output_dir / filename) # open3d needs paths as strings
+        o3d.io.write_point_cloud(file_path, self.pcd.to_legacy())

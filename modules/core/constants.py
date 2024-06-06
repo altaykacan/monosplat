@@ -21,7 +21,6 @@ CITYSCAPES_LABELS = (
     "bicycle",
 )
 
-
 # Colors for trajectory plotting
 TRAJECTORY_COLORS = (
     "blue",
@@ -32,4 +31,14 @@ TRAJECTORY_COLORS = (
     "purple",
     "pink",
     "brown",
+)
+
+# Random seeds for evaluation
+SEEDS = (
+    123456789,
+    987654321,
+    42,
+    13,
+    7,
+    0,
 )

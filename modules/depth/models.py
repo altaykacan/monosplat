@@ -89,9 +89,7 @@ class Metric3Dv2(DepthModel):
     def _preprocess(self, input_dict: Dict) -> Dict:
         # Code heavily inspired from original metric3dv2 authors: https://github.com/YvanYin/Metric3D/blob/main/hubconf.py#L122
         images = input_dict["images"]
-
         N, C, H, W = images.shape
-
         preprocessed_images = []
 
         # Convert to numpy arrays to use cv2 image processing per item

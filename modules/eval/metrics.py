@@ -36,7 +36,7 @@ class AverageDepthMetric(AverageMetric):
         self._val, err = self.metric_fn(depth, gt_depth) # err is to visualize errors
         self._sum = self._sum + self._val
         self._count += 1 # counts batches, not samples
-        self.avg = self._sum / self._count
+        self.avg = self._sum / self._count # averages over batches
         return err
 
 
@@ -45,7 +45,7 @@ def compute_absrel(depth: torch.Tensor, gt_depth: torch.Tensor) -> Tuple[float, 
     mask = gt_depth > 0 # also avoids division by zero
     diff = torch.abs(depth[mask] - gt_depth[mask]) / gt_depth[mask]
     err[mask]= diff
-    result = torch.mean(diff).item() # mean over all pixels in batch
+    result = torch.mean(diff).item() # mean over all pixels in current batch
     return result, err
 
 
@@ -62,18 +62,18 @@ def compute_sqrel(depth: torch.Tensor, gt_depth: torch.Tensor) -> Tuple[float, t
 # i.e. is the sum over all pixels for a given image or is it ALL valid pixels in the WHOLE dataset
 def compute_rmse(depth: torch.Tensor, gt_depth: torch.Tensor) -> Tuple[float, torch.Tensor]:
     N, C, H, W = depth.shape
-    err = torch.zeros_like(depth) # [N, 1, H, W]
+    err = torch.zeros_like(depth) # [N, 1, H, W], useful for visualization
     diff = 0.0
 
     # Due to the square root, taking the mean over batched preds in one go doesn't work
     for batch_idx in range(N):
         depth_i = depth[batch_idx, :, :, :] # [1, H, W]
         gt_depth_i = gt_depth[batch_idx, : ,:, :] # [1, H, W]
-        mask = gt_depth_i > 0 # per-batch element masking
+        mask = gt_depth_i > 0 # per-batch sample pixel masking
         err[batch_idx][mask] = torch.sqrt((depth_i[mask] - gt_depth_i[mask])**2) # tensor
         diff += torch.sqrt(torch.mean((depth_i[mask] - gt_depth_i[mask])**2)).item() # scalar
 
-    result = diff / N # take the mean over the current batch too
+    result = diff / N # take the mean over the current batch
     return result, err
 
 

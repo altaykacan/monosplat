@@ -86,7 +86,6 @@ class RAFT(OpticalFlowModel):
             self._model.to(self._device)
             self._model.eval()
 
-
     def unload(self):
         self._model = None
         self._weights = None

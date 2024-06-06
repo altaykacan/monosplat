@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 from configs.data import SUPPORTED_DATASETS
 from modules.eval.tum_rgbd_tools.associate import associate
 
+
 def round_results(results: Dict, decimal_point: int) -> Dict:
     "Parses all elements of a dictionary and rounds them up to a given decimal point"
     for key, value in results.items():
@@ -100,3 +101,4 @@ def save_rpe_plot(trans_error: torch.Tensor, stamps: torch.Tensor, filename: Uni
     ax.set_xlabel('time [s]')
     ax.set_ylabel('translational error [m]')
     plt.savefig(Path(output_dir) / Path(filename),dpi=300)
+

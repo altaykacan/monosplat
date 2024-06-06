@@ -12,6 +12,7 @@ from modules.depth.models import DepthModel
 from modules.core.interfaces import BaseReconstructor, BaseModel, BaseBackprojector, BaseDataset
 from modules.core.utils import Logger
 
+
 class SimpleReconstructor(BaseReconstructor):
     def __init__(self, dataset: BaseDataset, backprojector: BaseBackprojector, depth_model: DepthModel, cfg: Dict = {}):
         self.parse_config(cfg)
