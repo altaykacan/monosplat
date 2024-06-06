@@ -108,7 +108,23 @@ class PointCloud(BaseMap):
 
         self.pcd = pcd
 
+    def clean(self, num_neighbors: int = 20, std_deviation: float = 2.0, save_init_cloud: bool = False):
+        """
+        Cleans the open3D point cloud that is created after running `postprocess()`
+        using statistical outlier removal. Optionally saves the point cloud before
+        cleaning.
+        """
+        if self.pcd is None:
+            raise RuntimeError("You need to first run 'PointCloud.postprocess()' before cleaning your map!")
+
+        if save_init_cloud:
+            self.prev_pcd = self.pcd # remember cloud before cleaning, useful for debugging
+        self.pcd, _ = self.pcd.remove_statistical_outliers(num_neighbors, std_deviation)
+
     def save(self, filename: Union[Path, str] = "map.ply", output_dir: Union[Path, str] = "."):
+        if self.pcd is None:
+            raise RuntimeError("You need to first run 'PointCloud.postprocess()' before saving your map!")
+
         if isinstance(filename, str):
             filename = Path(filename)
         if isinstance(output_dir, str):
