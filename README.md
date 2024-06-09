@@ -1,12 +1,9 @@
 # 🎓 Master Thesis Project - Generalized Large-Scale Dense 3D Point Cloud Reconstruction from a Monocular Camera
 
-The current work on scale alignment is under the Python package `scale_alignment`. To see examples and visualizations please see `debug.ipynb`. The script `tests.py` include example usages of the developed functionality.
-
-Image data (`data/images`) and debug results (`debug_results`) are not on GitHub, please contact me if you'd like a zip file.
 
 To clone:
 ```bash
-git clone --recurse-submodules git@github.com:altaykacan/Toolbox-Draft.git
+git clone --recurse-submodules git@github.com:altaykacan/DEN-Splatting.git
 ```
 
 If you forgot to include `--recurse-submodules` you can use the following after cloning:
@@ -31,10 +28,7 @@ pip install mmsegmentation
 
 ### For UniDepth ###
 
-
-
 ### For DSINE ###
-
 
 ####################
 
@@ -52,5 +46,4 @@ pip install moviepy # for video creation
 - MMseg
 - unidepth
 - ...
-
-- [] TODO: Add links!
+*TODO: Add links!*
