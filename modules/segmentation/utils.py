@@ -4,6 +4,7 @@ import torch
 
 from ..core.constants import CITYSCAPES_LABELS
 
+
 def mmseg_get_class_ids(class_names: List[str], dataset: str = "CITYSCAPES") -> List[int]:
     """
     Converts a list of class names (strings) into a list of corresponding
@@ -32,7 +33,8 @@ def mmseg_get_class_ids(class_names: List[str], dataset: str = "CITYSCAPES") -> 
 
     return class_ids
 
-def combine_segmentation_maps(masks_dict: Dict, combine_list: List[str]) -> torch.Tensor:
+
+def combine_segmentation_masks(masks_dict: Dict, combine_list: List[str] = []) -> torch.Tensor:
     """
     Combines the standard output of `SegmentationModel` classes into a single
     batched mask.
@@ -41,14 +43,17 @@ def combine_segmentation_maps(masks_dict: Dict, combine_list: List[str]) -> torc
         - `masks_dict`: A dictionary which has the class names as keys and the batched
             mask tensors as the values.
         - `combine_list`: The list of class names that should be combined into a
-            single mask.
+            single mask. Leave as an empty list to combine all masks.
     """
-    assert len(combine_list) != 0, "You must provide a list of class names to combine the maps for!"
+    mask_names = list(masks_dict.keys())
+    if combine_list == []:
+        combine_list = mask_names # combine all masks if combine_list is empty
 
     final_mask = torch.zeros_like(masks_dict[combine_list[0]])
 
     for class_name in combine_list:
-        assert class_name in masks_dict.keys(), f"The class name {class_name} cannot be found in the provided masks. Check your input to 'combine_segmentation_maps'!"
+        if not (class_name in masks_dict.keys()):
+            raise ValueError(f"The class name {class_name} cannot be found in the provided masks. Check your input to 'combine_segmentation_masks'!")
 
         final_mask = torch.logical_or(masks_dict[class_name], final_mask) # aggregating the masks
 

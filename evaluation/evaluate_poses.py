@@ -1,11 +1,13 @@
-# TODO implement this :)
+"""
+Script for evaluating average metrics over multiple pose predictions and
+comparing it to one reference pose.
+"""
 import json
 import argparse
 import logging
 import datetime
 import pprint
 from pathlib import Path
-from typing import NamedTuple
 from collections import OrderedDict
 
 import torch
@@ -18,7 +20,7 @@ from modules.eval.utils import round_results, extract_translations_from_poses, g
 from modules.eval.metrics import compute_ate, compute_rpe
 from modules.eval.tum_rgbd_tools.associate import associate
 from modules.eval.tum_rgbd_tools.evaluate_ate import align
-from modules.io.utils import find_all_files_in_dir, read_all_poses_and_stamps, read_poses_from_stamps
+from modules.io.utils import find_all_files_in_dir, read_all_poses_and_stamps
 from configs.data import EVAL_DECIMAL_POINTS
 
 def main(args):
@@ -26,7 +28,7 @@ def main(args):
     ref_pose_path = Path(args.ref_pose_path)
     output_dir = Path(args.output_dir)
     dataset = args.dataset.lower()
-    ref_dataset = args.ref_dataset
+    ref_dataset = args.ref_dataset.lower()
     align_scale = args.align_scale
 
     # Setup logging
@@ -57,13 +59,9 @@ def main(args):
         poses, stamps = read_all_poses_and_stamps(pose_path, dataset)
         ref_poses, ref_stamps = read_all_poses_and_stamps(ref_pose_path, ref_dataset)
 
-        # Get trajectories (just the translations)
-        traj = extract_translations_from_poses(poses) # [3, N]
-        ref_traj = extract_translations_from_poses(ref_poses)
-
-        # Get matched trajectories
-        traj_m, ref_traj_m = get_pose_matches(traj,
-                                              ref_traj,
+        # Get matched trajectories (translations of valid poses)
+        traj_m, ref_traj_m = get_pose_matches(poses,
+                                              ref_poses,
                                               stamps,
                                               ref_stamps,
                                               dataset
@@ -107,31 +105,39 @@ def main(args):
         ])
 
         # Save plots of the trajectories
-        save_traj([s * rot @ traj + t, ref_traj],
+        save_traj([s * rot @ traj_m + t, ref_traj_m],
                     labels=["aligned", "ref"],
-                    filename=f"traj_{i}_1_umeyama_alignment.png",
+                    filename=f"{pose_path.stem}_1_umeyama_alignment.png",
                     output_dir=output_dir
         )
-        save_traj([traj, ref_traj],
+        save_traj([traj_m, ref_traj_m],
                     labels=["pred", "ref"],
-                    filename=f"traj_{i}_2_no_alignment.png",
+                    filename=f"{pose_path.stem}_2_no_alignment.png",
                     output_dir=output_dir,
         )
-        save_traj([torch.Tensor(rot_tum).double() @ traj + torch.Tensor(t_tum).double(), ref_traj],
-                    labels=["aligned", "ref"],
-                    filename=f"traj_{i}_3_tum_aligned.png",
-                    output_dir=output_dir,
-        )
-        save_traj([s * rot @ traj + t, ref_traj, traj],
+        save_traj(
+            [torch.Tensor(rot_tum).double() @ traj_m + torch.Tensor(t_tum).double(), ref_traj_m],
+            labels=["aligned", "ref"],
+            filename=f"{pose_path.stem}_3_tum_aligned.png",
+            output_dir=output_dir,
+            )
+        save_traj([s * rot @ traj_m + t, ref_traj_m, traj_m],
                     labels=["aligned", "ref", "pred"],
-                    filename=f"traj_{i}_4_umeyama_alignment_with_pred.png",
-                    output_dir=output_dir
+                    filename=f"{pose_path.stem}_4_umeyama_alignment_with_pred.png",
+                    output_dir=output_dir,
+        )
+
+        save_traj([s * rot @ traj_m + t, ref_traj_m],
+                    labels=["aligned", "ref"],
+                    filename=f"{pose_path.stem}_5_umeyama_alignment_with_diff.png",
+                    output_dir=output_dir,
+                    show_diff=True,
         )
 
         save_rpe_plot(trans_error_rpe,
                         stamps_rpe,
-                        filename=f"traj_{i}_rpe_plot.png",
-                        output_dir=output_dir
+                        filename=f"{pose_path.stem}_6_rpe_plot.png",
+                        output_dir=output_dir,
         )
 
     # Average over the means and rmse values of different sequences
@@ -177,6 +183,5 @@ if __name__ == "__main__":
     parser.add_argument("--align_scale", action="store_true", help="Flag to specify whether in addition to rotations and translations, a scale factor for alignment is computed.")
 
     args = parser.parse_args()
-
 
     main(args)

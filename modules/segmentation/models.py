@@ -174,8 +174,8 @@ class SegFormer(SegmentationModel):
 
         # TODO figure out if these paths work properly
         # These are intended to be called from a main function/script running in the base directory of the project
-        default_checkpoint = "./checkpoints/segformer_mit-b0_8x1_1024x1024_160k_cityscapes_20211208_101857-e7f88502.pth"
-        default_config =  "./configs/thirdparty/mmseg/segformer/segformer_mit-b0_8xb1-160k_cityscapes-1024x1024.py"
+        default_checkpoint = "./checkpoints/segformer_mit-b5_8x1_1024x1024_160k_cityscapes_20211206_072934-87a052ec.pth"
+        default_config =  "./configs/thirdparty/mmseg/segformer/segformer_mit-b5_8xb1-160k_cityscapes-1024x1024.py"
         default_dataset = "CITYSCAPES"
 
         self._checkpoint = cfg.get("mmseg_checkpoint", default_checkpoint)

@@ -1,0 +1,14 @@
+defaults:
+  - dataset: kitti360
+  - pose_estimation: orb-slam
+  - reconstruction: simple
+  - splatting: slam
+
+
+exp_name: "debug"
+video_path: ""
+extract_frames: False
+run_colmap: False
+precomputation: 
+  depth: True
+  normal: True

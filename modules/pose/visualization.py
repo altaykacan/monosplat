@@ -37,6 +37,7 @@ def save_traj(trajectories: List[torch.Tensor], labels: List[str], filename: Uni
     ax.set_xlabel('x [m]')
     ax.set_ylabel('y [m]')
     plt.savefig(Path(output_dir) / Path(filename), dpi=90)
+    plt.close()
 
 
 

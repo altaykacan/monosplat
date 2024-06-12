@@ -2,8 +2,9 @@
 KITTI360_DIR = "/usr/stud/kaa/data/KITTI-360"
 
 # Total character size of the filenames used to save/read images
-PADDED_IMG_NAME_LENGTH = 10
-# PADDED_IMG_NAME_LENGTH = 6
+# PADDED_IMG_NAME_LENGTH = 10 # for kitti360 and everything else
+# PADDED_IMG_NAME_LENGTH = 6 # for kitti
+PADDED_IMG_NAME_LENGTH = 5 # for colmap
 
 # Where you want the outputs to be saved
 OUTPUT_DIR = "/usr/stud/kaa/data/root/ds01"

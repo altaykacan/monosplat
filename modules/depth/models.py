@@ -6,7 +6,7 @@ import torch
 import cv2
 import numpy as np
 
-from modules.io.datasets import KITTI360Dataset
+from modules.io.datasets import CustomDataset, KITTI360Dataset
 from modules.core.interfaces import BaseModel
 
 log = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ class Metric3Dv2(DepthModel):
 
     Expected inputs and outputs for `Metric3Dv2.predict()`:
     `input_dict`: `{"images": batched image tensors with shape [N, C, H, W]}`
-    `output_dict`: `{"pred_depth": batched depth predictions with shape [N, C, H, W]}`
+    `output_dict`: `{"depths": batched depth predictions with shape [N, C, H, W]}`
     """
     def __init__(self, intrinsics: Tuple, depth_pred_size: Tuple = (), backbone="convnext", device: str = None):
         self._intrinsics = intrinsics
@@ -44,7 +44,6 @@ class Metric3Dv2(DepthModel):
         if not torch.cuda.is_bf16_supported() and "vit" in backbone:
             log.warning(f"Your GPU does not support bfloat16 (needs CUDA compute capability >= 8.0), switching to ConvNeXt backbone for Metric3Dv2!")
             backbone = "convnext"
-
 
         # Suggestions from the authors for vit model: (616, 1064), for convnext model: (544, 1216)
         if depth_pred_size != ():
@@ -133,6 +132,7 @@ class Metric3Dv2(DepthModel):
         return input_dict
 
     def _predict(self, input_dict: Dict) -> Dict:
+        output_dict = {}
         # Code heavily inspired from original metric3dv2 authors: https://github.com/YvanYin/Metric3D/blob/main/hubconf.py#L122
         images_origin = input_dict["images"]
         images = input_dict["preprocessed_images"]
@@ -141,7 +141,7 @@ class Metric3Dv2(DepthModel):
         N, _, H_origin, W_origin = images_origin.shape
 
         with torch.no_grad():
-            pred_depth, confidence, depth_output_dict = self._model.inference({"input": images})
+            pred_depth, confidence, model_output_dict = self._model.inference({"input": images})
 
         # Undo padding, keeping the batch and channel dimensions
         N, C, H, W = pred_depth.shape
@@ -156,7 +156,25 @@ class Metric3Dv2(DepthModel):
         pred_depth = pred_depth * canonical_to_real_scale # now the depth is supposed to be metric
         pred_depth = pred_depth.clamp(min=0, max=300)
 
-        return {"depths": pred_depth}
+        output_dict["depths"] = pred_depth
+
+        if 'prediction_normal' in model_output_dict: # only available for Metric3Dv2, i.e. vit model
+            # Normals are predicted in camera coordinate frame
+            pred_normal = model_output_dict['prediction_normal'][:, :3, :, :]
+            normal_confidence = model_output_dict['prediction_normal'][:, 3, :, :] # see https://arxiv.org/abs/2109.09881 for details
+
+            # Unpad and resize to some size if needed
+            pred_normal = pred_normal.squeeze()
+            pred_normal = pred_normal[:, pad_info[0] : pred_normal.shape[1] - pad_info[1], pad_info[2] : pred_normal.shape[2] - pad_info[3]]
+
+            # To visualize normals we need to convert values from [-1, 1] to [0, 255]
+            pred_normal_vis = pred_normal.permute(1, 2, 0)
+            pred_normal_vis = (pred_normal_vis + 1) / 2
+            pred_normal_vis = (pred_normal_vis * 255).to(torch.uint8)
+            output_dict["normals"] = pred_normal
+            output_dict["normals_vis"] = pred_normal_vis
+
+        return output_dict
 
 
 class KITTI360DepthModel(DepthModel):
@@ -210,8 +228,35 @@ class PrecomputedDepthModel(DepthModel):
     `input_dict`: `{"frame_ids":  List[int] frame ids of the images to 'predict' depths by loading in precomputed depths}`
     `output_dict`: `{"depths": Batched loaded in precomputed depth values [N, 1, H, W]}`
     """
-    def __init__(self, data_dir: Union[Path, str]):
+    def __init__(self, dataset: CustomDataset, device: str = None):
+        self._dataset = dataset
+        if device is None:
+            self._device ="cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            self._device = device
+
+    def load(self):
         pass
+
+    def unload(self):
+        pass
+
+    def _preprocess(self, input_dict: Dict) -> Dict:
+        return input_dict
+
+    def _predict(self, input_dict: Dict) -> Dict:
+        frame_ids = input_dict["frame_ids"]
+        depths = []
+
+        for frame_id in frame_ids:
+            idx = self._dataset.frame_ids.index(frame_id)
+            depth_path = self._dataset.depth_paths[idx]
+            depth = torch.from_numpy(np.load(depth_path)).float() # [H , W]
+            depths.append(depth.unsqueeze(0)) # [1, H, W]
+
+        depths = torch.stack(depths, dim=0).to(self._device) # [N, 1, H, W]
+
+        return {"depths": depths}
 
 
 # TODO implement, the  torch versions are different and that might cause issues with metric3dv2 and mmseg installations

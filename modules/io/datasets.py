@@ -5,12 +5,14 @@ from typing import Union, Tuple, List
 
 import torch
 import numpy as np
+import open3d as o3d
 from PIL import Image
 from scipy.spatial.transform import Rotation
 import torchvision.transforms.functional as tv_F
 
 from configs.data import KITTI360_DIR, PADDED_IMG_NAME_LENGTH
 from modules.eval.kitti360 import projectVeloToImage
+from modules.core.utils import compute_target_intrinsics
 from modules.core.interfaces import BaseDataset
 
 log = logging.getLogger(__name__)
@@ -21,25 +23,55 @@ class CustomDataset(BaseDataset):
     Default CustomDataset implementation. Expects poses to be saved in TUM RGB-D
     dataset format unless `parse_pose()` is overriden.
     """
-    def __init__(self, image_dir: Union[Path, str], pose_path: Union[Path, str], pose_scale: float, orig_intrinsics: Tuple, orig_size: Tuple, target_size: Tuple, start: int = 0, end: int = -1, device: str = None):
+    def __init__(
+            self,
+            image_dir: Union[Path, str],
+            pose_path: Union[Path, str],
+            pose_scale: float,
+            orig_intrinsics: Tuple,
+            orig_size: Tuple,
+            target_size: Tuple = (),
+            gt_depth_dir: Union[Path, str] = None,
+            depth_dir: Union[Path, str] = None,
+            start: int = 0,
+            end: int = -1,
+            device: str = None
+            ) -> None:
         self.image_dir = image_dir if isinstance(image_dir, Path) else Path(image_dir)
         self.pose_path = pose_path if isinstance(pose_path, Path) else Path(pose_path)
+
+        if gt_depth_dir is None:
+            self.gt_depth_dir = None
+            self.has_gt_depth = False
+        else:
+            self.gt_depth_dir = gt_depth_dir if isinstance(gt_depth_dir, Path) else Path(gt_depth_dir)
+            self.has_gt_depth = True
+
+        if depth_dir is None:
+            self.depth_dir = None
+            self.has_depth = False
+        else:
+            self.depth_dir = gt_depth_dir if isinstance(gt_depth_dir, Path) else Path(gt_depth_dir)
+            self.has_depth = True
 
         self.pose_scale = pose_scale
         self.orig_size = orig_size
         self.orig_intrinsics = orig_intrinsics
-        self.size = target_size
+        self.size = target_size if target_size != () else orig_size
         self.intrinsics = ()
         self.crop_box = ()
 
         self.frame_ids = []
         self.image_paths = []
+        self.gt_depth_paths = [] # for ground truth depth
+        self.depth_paths = [] # for precomputed depth
         self.poses = []
 
         self.start = start
         self.end = end
         self.start_idx = None
         self.end_idx = None
+
         if device is None:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
         else:
@@ -51,9 +83,15 @@ class CustomDataset(BaseDataset):
         if not self.pose_path.is_file():
             raise FileNotFoundError(f"The pose file can't be found in {str(self.pose_path)}, please check your data!")
 
-        self.compute_target_intrinsics() # populates self.crop_box and self.intrinsics
+        self.set_target_intrinsics() # populates self.crop_box and self.intrinsics
         self.load_image_paths_and_poses() # populates self.frame_ids, self.image_paths and self.poses
         self.truncate_paths_and_poses() # truncates the lists, populates self.start_idx and self.end_idx
+
+        if self.has_gt_depth:
+            self.load_gt_depth_paths() # load in ground truth depth paths if needed
+
+        if self.has_depth:
+            self.load_depth_paths() # load in precomputed depth paths if needed
 
     def parse_image_path_and_frame_id(self, cols: List[str]) -> Tuple[Path, int]:
         frame_id = self.parse_frame_id(cols)
@@ -61,6 +99,30 @@ class CustomDataset(BaseDataset):
         image_path = Path(self.image_dir, image_name)
 
         return image_path, frame_id
+
+    def load_gt_depth_paths(self):
+        # frame_ids are already truncated, no need to do it again for depths
+        for frame_id in self.frame_ids:
+            depth_path = Path(self.gt_depth_dir, f"{frame_id:0{PADDED_IMG_NAME_LENGTH}}.npy")
+
+            if not depth_path.is_file():
+                raise FileNotFoundError(f"The ground truth depth value at '{depth_path}' can't be found. Please check your data at '{self.gt_depth_dir}' or trying running 'projectVeloToImage' at 'modules.eval.kitti360' again.")
+
+            self.gt_depth_paths.append(depth_path)
+
+        return None
+
+    def load_depth_paths(self):
+        # frame_ids are already truncated, no need to do it again for depths
+        for frame_id in self.frame_ids:
+            depth_path = Path(self.depth_dir, f"{frame_id:0{PADDED_IMG_NAME_LENGTH}}.npy")
+
+            if not depth_path.is_file():
+                raise FileNotFoundError(f"The precomputed depth value at '{depth_path}' can't be found. Please check your data at '{self.depth_dir}' or trying running '3_precompute_depth_and_normals.py' again.")
+
+            self.depth_paths.append(depth_path)
+
+        return None
 
     @classmethod
     def parse_frame_id(cls, cols: List[str]) -> int:
@@ -109,7 +171,7 @@ class CustomDataset(BaseDataset):
 
         return pose
 
-    def load_image_paths_and_poses(self):
+    def load_image_paths_and_poses(self) -> None:
         """
         Fetches poses from `self.pose_path` and the corresponding image paths
         from `self.image_dir`. Uses `self.parse_pose()` to convert the specific
@@ -133,7 +195,7 @@ class CustomDataset(BaseDataset):
             pose = self.parse_pose(cols)
 
             if frame_id in self.frame_ids:
-                log.warning(f"Frame id {frame_id} has already been read. Skipping adding the associated images and poses.")
+                log.warning(f"Frame id {frame_id} has already been read. Skipping the associated images and poses.")
             else:
                 self.frame_ids.append(frame_id)
                 self.image_paths.append(image_path)
@@ -147,78 +209,23 @@ class CustomDataset(BaseDataset):
 
         return None
 
-    def compute_target_intrinsics(self):
+    def set_target_intrinsics(self) -> None:
         """
-        Computes new intrinsics after resizing an image to a given target size.
-        The function computes how the original image should be cropped
-        such that the aspect ratio (`H/W`) of the cropped image matches the ratio of
-        `target_size` specified by the user. Returns new intrinsics and the crop box
-        as two separate tuples.
-
-        Code inspired from `compute_target_intrinsics()` from MonoRec: https://github.com/Brummi/MonoRec/blob/81b8dd98b86e590069bb85e0c980a03e7ad4655a/data_loader/kitti_odometry_dataset.py#L318
-
         Sets attributes for the `CustomDataset`:
             `intrinsics`: The computed intrinsics for the resize `(fx, fy, cx, cy)`
             `crop_box`: The crop rectangle to preserve ratio of height/width
                     of the target image size as a `(left, upper, right, lower)`-tuple.
         """
-        height, width = self.orig_size
-        height_target, width_target = self.size
-
-        # Avoid extra computation if the original and target sizes are the same
-        if self.orig_size == self.size:
-            self.intrinsics = self.orig_intrinsics
-            self.crop_box = ()
-        else:
-            r = height / width
-            r_target = height_target / width_target
-
-            fx, fy, cx, cy = self.orig_intrinsics
-
-            if r >= r_target:
-                # Width stays the same, we compute new height to keep target ratio
-                new_height = r_target * width
-                crop_box = (
-                    0,
-                    (height - new_height) // 2,
-                    width,
-                    height - (height - new_height) // 2,
-                )
-
-                rescale = width / width_target  # equal to new_height / height_target
-
-                # Need to shift the camera center coordinate in the direction we crop
-                cx = cx / rescale
-                cy = (cy - (height - new_height) / 2) / rescale
-
-            else:
-                # Height stays the same, we compute new width to keep target ratio
-                new_width = height / r_target
-                crop_box = (
-                    (width - new_width) // 2,
-                    0,
-                    width - (width - new_width) // 2,
-                    height,
-                )
-
-                rescale = height / height_target  # equal to new_width / width_target
-
-                cx = (cx - (width - new_width) / 2) / rescale
-                cy = cy / rescale
-
-            # Rescale the focal lenghts
-            fx = fx / rescale
-            fy = fy / rescale
-
-            # Set the attributes of the dataset class
-            self.intrinsics = (fx, fy, cx, cy)
-            self.crop_box = tuple([int(coord) for coord in crop_box]) # should only have ints
-
+        self.intrinsics, self.crop_box = compute_target_intrinsics(
+                                            self.orig_intrinsics,
+                                            self.orig_size,
+                                            self.size)
         return None
+
 
     def preprocess(self, image: torch.Tensor) -> torch.Tensor:
         """
-        Resize and crop the given image using torchvision.
+        Resize and crop the given image using torch interpolation and torchvision.
 
         Converts the `crop_box` notation to match the torchvision format.
         Coordinate system origin is at the top left corner, x is horizontal
@@ -340,17 +347,19 @@ class KITTIDataset(CustomDataset):
 class KITTI360Dataset(CustomDataset):
     """
     Dataset that is used to load in and work with the ground truth data (pose
-    and depth) of KITTI360
+    and depth) of KITTI360. If you want to use predicted poses but KITTI360
+    ground truth depth, make sure you extract the velodyne data properly and
+    use a `CustomDataset` instance with the correct `gt_depth_dir` attribute.
     """
-    def __init__(self, seq: int, cam_id: int, target_size: Tuple = (), start: int = 0, end: int = -1):
+    def __init__(self, seq: int, cam_id: int, target_size: Tuple = (), pose_scale: float = 1.0, start: int = 0, end: int = -1):
         # KITTI360 specific preparation before calling the constructor of the super class
         self.seq = seq
         self.cam_id = cam_id
 
         sequence = '2013_05_28_drive_%04d_sync'%seq
         image_dir = Path(KITTI360_DIR, "data_2d_raw", sequence, f"image_0{cam_id}", "data_rect")
+        gt_depth_dir = Path(KITTI360_DIR, "data_3d_raw", sequence, f"image_0{cam_id}", "depths")
         pose_path = Path(KITTI360_DIR, "data_poses", sequence, "cam0_to_world.txt")
-        pose_scale = 1.0 # ground truth poses and depths so scale is 1
 
         if cam_id in [0, 1]:
             orig_intrinsics = (552.554261, 552.554261, 682.049453, 238.769549)
@@ -361,35 +370,19 @@ class KITTI360Dataset(CustomDataset):
         if target_size == ():
             target_size = orig_size
 
-        # Call to constructor of CustomDataset, sets most attributes
-        super().__init__(image_dir, pose_path, pose_scale, orig_intrinsics, orig_size, target_size, start, end)
-
-        # Save and load paths for the ground truth depths
-        self.gt_depth_dir = Path(KITTI360_DIR, "data_3d_raw", sequence, f"image_0{cam_id}", "depths")
-        self.gt_depth_paths = []
-
-        gt_depth_dir_exists = self.gt_depth_dir.is_dir()
+        # Populate gt depth directory if it's empty using KITTI360 depth extraction
+        gt_depth_dir_exists = gt_depth_dir.is_dir()
 
         if gt_depth_dir_exists:
-            gt_depth_dir_is_empty = not any(self.gt_depth_dir.iterdir())
+            gt_depth_dir_is_empty = not any(gt_depth_dir.iterdir())
 
         if not gt_depth_dir_exists or gt_depth_dir_is_empty:
-            log.info(f"The ground truth depth files for KITTI360 at {self.gt_depth_dir} do not exist. Reading and saving all values for {sequence} in that directory. This might take a while...")
+            log.info(f"The ground truth depth files for KITTI360 at {gt_depth_dir} do not exist. Reading and saving all values for {sequence} in that directory. This might take a while...")
             projectVeloToImage(cam_id, seq, KITTI360_DIR, max_d=200, image_name_padding=PADDED_IMG_NAME_LENGTH)
 
-        self.load_gt_depth_paths()
+        # Call to constructor of CustomDataset, sets most attributes
+        super().__init__(image_dir, pose_path, pose_scale, orig_intrinsics, orig_size, target_size, gt_depth_dir, start, end)
 
-    def load_gt_depth_paths(self):
-        # frame_ids are already truncated, no need to do it again for depths
-        for frame_id in self.frame_ids:
-            depth_path = Path(self.gt_depth_dir, f"{frame_id:0{PADDED_IMG_NAME_LENGTH}}.npy")
-
-            if not depth_path.is_file():
-                raise FileNotFoundError(f"The ground truth depth value at '{depth_path}' can't be found. Please check your data at '{self.gt_depth_dir}' or trying running 'projectVeloToImage' at 'modules.eval.kitti360' again.")
-
-            self.gt_depth_paths.append(depth_path)
-
-        return None
 
     @classmethod
     def parse_pose(cls, cols: List[str]) -> torch.Tensor:
@@ -417,12 +410,171 @@ class TUMRGBDDataset(CustomDataset):
         Returns the frame id (or timestamp) as a float, return None to
         enumerate frames starting from 0
         """
-        # First convert to float to deal with scientific notation if it exists
+        # For the tum rgb-d dataset the timestamps (filenames) are floats
         frame_id = float(cols[0])
         return frame_id
 
-# TODO implement, probably just need the parse_pose and parse_frame_id class methods
+
 class COLMAPDataset(CustomDataset):
-    pass
+    def __init__(self, colmap_dir: Union[Path, str], pose_scale: float, orig_intrinsics: Tuple, orig_size: Tuple, target_size: Tuple = (), gt_depth_dir: Union[Path, str] = None,  start: int = 0, end: int = -1):
+        image_dir = Path(colmap_dir) / Path("images")
+        data_dir = Path(colmap_dir) / Path("sparse/0")
+        pose_txt = data_dir / Path("images.txt")
+        points_txt = data_dir / Path("points3D.txt")
+        self.pcd = None
 
+        if not pose_txt.is_file():
+            raise FileNotFoundError(f"Can't find the pose files in {str(pose_txt)}. If you only have .bin files, please run 'colmap model_converter --input_path 0 --output_path 0 --output_type TXT' in the right directory to convert binary files to txt files.")
 
+        if not points_txt.is_file():
+            raise FileNotFoundError(f"Can't find the points3D files in {str(points_txt)}. If you only have .bin files, please run 'colmap model_converter --input_path 0 --output_path 0 --output_type TXT' in the right directory to convert binary files to txt files.")
+
+        self.load_colmap_map(points_txt) # populates self.pcd
+        super().__init__(image_dir, pose_txt, pose_scale, orig_intrinsics, orig_size, target_size, gt_depth_dir, start, end)
+
+    def load_colmap_map(self, points_txt: Path):
+        """
+        Saves the colmap point cloud from 'points3D.txt'
+        The COLMAP outputs are formatted as follows:
+
+        ```
+        # 3D point list with one line of data per point:
+        #   POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[] as (IMAGE_ID, POINT2D_IDX)
+        ```
+        """
+        self.pcd = o3d.t.geometry.PointCloud()
+        xyz = []
+        rgb = []
+
+        with open(points_txt, "r") as file:
+            for line in file:
+                if "#" in line:
+                    continue  # means it's a comment
+                else:
+                    line_split = line.split(" ")
+
+                    id, x, y, z, r, g, b = line_split[0:7]
+
+                    # Open3D needs normalized integer values for RGB
+                    r = int(r) / 255
+                    g = int(g) / 255
+                    b = int(b) / 255
+
+                    xyz.append([float(x), float(y), float(z)])
+                    rgb.append([r, g, b])
+
+        self.pcd.point.positions = np.array(xyz)
+        self.pcd.point.colors = np.array(rgb)
+
+    @classmethod
+    def parse_frame_id(cls, cols: List[str]) -> int:
+        """
+        Returns the frame id (the name of the image file) which is the last
+        column in COLMAP format. The first column is the COLMAP internal image id.
+        Expects to receive the space-split rows of `images.txt` from COLMAP
+        describing the image poses, not the 2D points for each image (i.e.
+        expects every other line of `images.txt`)
+        """
+        image_name = cols[-1] # has file extension, we don't want that
+        image_stem = image_name.split(".")[0]
+        frame_id = int(float(image_stem))
+        return frame_id
+
+    @classmethod
+    def parse_pose(cls, cols: List[str]) -> torch.Tensor:
+        """
+        Parses a row of the pose file. Expects only the line containing the
+        pose information.
+
+        Assumes that the poses are in COLMAP format. COLMAP stores *unordered*
+        trajectories and projected point coordinates as:
+        ```
+        # Image list with two lines of data per image:
+        #   IMAGE_ID QW QX QY QZ TX TY TZ CAMERA_ID NAME
+        #   POINTS2D[] as (X, Y, POINT3D_ID)
+        ...
+        ...
+        ```
+
+        Where the 4x4 transformation matrix describes T_CW (world to cam) and
+        the `qw` comes first in the quaternion. These are in contrast to the
+        TUM RGB-D dataset format that we follow.
+        """
+        # Get rotation from quaternion and translation as tensors
+        quaternion = cols[1:5]  # still list of strings
+        qw, qx, qy, qz = quaternion # qw first
+        quaternion = [qx, qy, qz, qw] # now qw last for scipy Rotation
+        quaternion = [float(val) for val in quaternion]
+        quaternion = np.array(quaternion)  # scipy wants numpy arrays
+        rotation = Rotation.from_quat(quaternion).as_matrix()
+        rotation = torch.tensor(rotation, dtype=torch.double, requires_grad=False)
+
+        translation = cols[5:8]
+        translation = [float(val) for val in translation]
+        translation = torch.tensor(
+            translation, dtype=torch.double, requires_grad=False
+        ).reshape(3, 1)
+
+        # Combine into 4x4 matrix
+        pose = torch.concat((rotation, translation), dim=1)  # [3, 4]
+        pose = torch.concat((pose, torch.tensor([[0, 0, 0, 1]])), dim=0)  # [4, 4]
+
+        # COLMAP has T_CW instead of T_WC like ORB-SLAM3, we work with ORB-SLAM3 notation
+        pose = torch.linalg.inv(pose)
+
+        return pose
+
+    def load_image_paths_and_poses(self):
+        """
+        Fetches poses and corresponding image paths. Specific for COLMAP datasets
+        because we need to skip every other line in `images.txt`.
+
+        COLMAP stores *unordered* trajectories and projected point coordinates as:
+        ```
+        # Image list with two lines of data per image:
+        #   IMAGE_ID QW QX QY QZ TX TY TZ CAMERA_ID NAME
+        #   POINTS2D[] as (X, Y, POINT3D_ID)
+        ...
+        ...
+        ```
+        """
+        skip_line = False # flag to skip every other line
+
+        with open(self.pose_path, "r") as file:
+            # Use while loop instead of reading all lines, `images.txt` can be really big
+            while True:
+                line = file.readline()
+                if not line:
+                    break
+                line = line.strip()
+                if len(line) >= 0 and line[0] != "#":
+                    if skip_line:
+                        skip_line = False
+                        continue
+                    else:
+                        skip_line = True # to skip the next line
+
+                    cols = line.split() # list of strings
+
+                    image_path, frame_id = self.parse_image_path_and_frame_id(cols)
+
+                    if not image_path.exists():
+                        log.warning(f"Image {image_path} specified in pose file can't be found, skipping this frame")
+                        continue
+
+                    pose = self.parse_pose(cols)
+
+                    if frame_id in self.frame_ids:
+                        log.warning(f"Frame id {frame_id} has already been read. Skipping the associated images and poses.")
+                    else:
+                        self.frame_ids.append(frame_id)
+                        self.image_paths.append(image_path)
+                        self.poses.append(pose)
+
+            if len(self.poses) == 0:
+                raise RuntimeError(f"No poses have been read, please check your pose file at '{self.pose_path}'. Tip: Make sure the number of zeros padded for image file names (in configs/data.py) matches your dataset")
+
+            if len(self.poses) != len(self.image_paths):
+                raise RuntimeError(f"Different number of poses and images has been read, please check your pose file at '{self.pose_path}' and your images at '{self.image_dir}'")
+
+            return None

@@ -2,6 +2,7 @@
 from typing import Dict, Union, Callable, Tuple, List
 
 import torch
+import open3d as o3d
 
 from modules.eval.utils import build_pose_dict
 from modules.eval.tum_rgbd_tools.evaluate_rpe import evaluate_trajectory_rpe
@@ -141,4 +142,67 @@ def compute_rpe(pred_poses: torch.Tensor, ref_poses: torch.Tensor, stamps: Union
     trans_error = torch.tensor(result, dtype=torch.double)[:, 4]
     rot_error = torch.tensor(result, dtype=torch.double)[:,5]
     return stamps_rpe, trans_error, rot_error
+
+
+def compute_accuracy_pcd(pred_to_ref_dists: torch.Tensor) -> float:
+    """
+    Computes the accuracy metric for point cloud reconstruction evaluation using
+    open3D.
+    """
+    dists = pred_to_ref_dists
+    acc = torch.mean(dists).item() # mean over all the pred points
+    return acc
+
+
+def compute_completion_pcd(ref_to_pred_dists: torch.Tensor) -> float:
+    """
+    Computes the completion metric for point cloud reconstruction evaluation
+    using open3D similar to `compute_accuracy_pcd()`.
+    """
+    # TODO do we need to mask the reference cloud (for missing ground truth?)
+    dists = ref_to_pred_dists
+    comp = torch.mean(dists).item() # mean over all the ground truth points
+    return comp
+
+
+def compute_chamfer_distance_pcd(accuracy: float, completion: float) -> float:
+    """
+    Computes chamfer distance which is the mean of the accuracy and completion
+    metrics for point cloud evaluation.
+    """
+    return (accuracy + completion) / 2
+
+
+def compute_precision_pcd(pred_to_ref_dists: torch.Tensor, thresh: float = 0.05) -> float:
+    """
+    Computes the precision metric for point cloud reconstruction evaluation
+    using open3D. It computes the mean distance from points in `pred_pcd` to
+    the closest point in `ref_pcd` for all point pairs that have a distance
+    less than `thresh`. In the literature this value is set to be 5cm.
+    """
+    dists = pred_to_ref_dists
+    valid_dists = dists < thresh
+    prec = len(valid_dists) / len(dists)
+    return prec
+
+
+def compute_recall_pcd(ref_to_pred_dists: torch.Tensor, thresh: float = 0.05) -> float:
+    """
+    Computes the recall metric for point cloud reconstruction evaluation using
+    open3D. Similar to `compute_precision_pcd()` but the distance computation
+    is the other way around.
+    """
+    dists = ref_to_pred_dists
+    valid_dists = dists < thresh
+    recall = len(valid_dists) / len(dists)
+    return recall
+
+
+def compute_fscore_pcd(precision: float, recall: float) -> float:
+    """
+    Computes the f-score which is the harmonic mean of the precision and recall
+    metrics.
+    """
+    return (2 * precision * recall) / (precision + recall)
+
 

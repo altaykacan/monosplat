@@ -135,7 +135,7 @@ class BaseLogger(ABC):
 
 class BaseDataset(ABC):
     @abstractmethod
-    def compute_target_intrinsics(self):
+    def set_target_intrinsics(self):
         pass
 
     @abstractmethod

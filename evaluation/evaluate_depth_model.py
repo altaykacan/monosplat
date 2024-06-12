@@ -1,6 +1,6 @@
 """
 Script for evaluating depth model predictions by comparing
-dense depth predictions with ground truth KITTI360 data
+dense depth predictions with sparse ground truth KITTI360 data
 """
 import json
 import argparse
@@ -8,7 +8,6 @@ import logging
 import datetime
 import pprint
 from pathlib import Path
-from typing import NamedTuple
 
 from tqdm import tqdm
 from torch.utils.data import DataLoader
@@ -39,7 +38,6 @@ def main(args):
     model = None
     gt_loader = None
 
-
     # Setup logging
     now = datetime.datetime.now()
     timestamp = now.strftime("%m-%d_%H-%M-%S")
@@ -54,7 +52,10 @@ def main(args):
         "absrel": AverageDepthMetric(compute_absrel),
         "sqrel": AverageDepthMetric(compute_sqrel),
         "rmse": AverageDepthMetric(compute_rmse),
-        "acc_1": AverageDepthMetric(compute_accuracy_threshold_1)
+        "rmse_log": AverageDepthMetric(compute_rmse_log),
+        "acc_1": AverageDepthMetric(compute_accuracy_threshold_1),
+        "acc_2": AverageDepthMetric(compute_accuracy_threshold_2),
+        "acc_3": AverageDepthMetric(compute_accuracy_threshold_3),
     }
 
     # Nested dictionary to store results, keys are metrics with dictionaries for sequences
@@ -85,7 +86,7 @@ def main(args):
             gt_depths = gt["depths"]
 
             for metric_name, metric in metrics.items():
-                err = metric.update(depths, gt_depths)
+                err = metric.update(depths, gt_depths) # you can use err to plot nice images
 
         # Record results and reset metrics
         for metric_name, metric in metrics.items():
@@ -102,39 +103,20 @@ def main(args):
 
         results[metric_name]["avg"] = total / count
 
-
     logging.info(f"Used model and variant: {depth_model}, {model_variant}")
     logging.info(f"Results: \n{pprint.pformat(results)}")
-    return results
 
 
 if __name__=="__main__":
-    # parser = argparse.ArgumentParser(description="Extracts ground truth depth information from KITTI360 and compares it with Depth Model predictions")
-    # parser.add_argument("--sequences", type=int, default=0, nargs="+", help="Sequence ids from KITTI360")
-    # parser.add_argument("--cam_id", type=int, default=0, help="Camera id from KITTI360")
-    # parser.add_argument("--depth_model", type=str, default="metric3d", required=True, help="Depth model to use")
-    # parser.add_argument("--model_variant", type=str, default="vit_giant", required=False, help="Depth model variant to use")
-    # parser.add_argument("--num_images", type=int, default=-1, help="Number of images to compute metrics and average over, enter -1 to use all images")
-    # parser.add_argument("--batch_size", type=int, default=2, help="Number of images to predict depths for in one iteration")
-    # parser.add_argument("--output", type=str, default="./evaluation/eval_results/", help="Path to save evaluation results")
+    parser = argparse.ArgumentParser(description="Extracts ground truth depth information from KITTI360 and compares it with Depth Model predictions")
+    parser.add_argument("--sequences", type=int, default=0, nargs="+", help="Sequence ids from KITTI360")
+    parser.add_argument("--cam_id", type=int, default=0, help="Camera id from KITTI360")
+    parser.add_argument("--depth_model", type=str, default="metric3d", required=True, help="Depth model to use")
+    parser.add_argument("--model_variant", type=str, default="vit_giant", required=False, help="Depth model variant to use")
+    parser.add_argument("--num_images", type=int, default=-1, help="Number of images to compute metrics and average over, enter -1 to use all images")
+    parser.add_argument("--batch_size", type=int, default=2, help="Number of images to predict depths for in one iteration")
+    parser.add_argument("--output", type=str, default="./evaluation/eval_results/", help="Path to save evaluation results")
 
-    # args = parser.parse_args()
-
-    # Useful when you want to debug
-    class DebugArgs(NamedTuple):
-        sequences = [0,3,4,5,6,7,9,10]
-        cam_id = 0
-        depth_model = "metric3d"
-        model_variant="vit_small"
-        num_images = 100
-        batch_size = 4
-        output="./evaluation/eval_results"
-    def __repr__(self):
-        return (f"DebugArgs(sequences={self.sequences}, cam_id={self.cam_id}, "
-                f"depth_model={self.depth_model}, model_variant={self.model_variant}, "
-                f"num_images={self.num_images}, batch_size={self.batch_size}, "
-                f"output={self.output})")
-
-    args = DebugArgs()
+    args = parser.parse_args()
 
     main(args)

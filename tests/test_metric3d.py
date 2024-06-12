@@ -5,7 +5,7 @@ import numpy as np
 from PIL import Image
 from torchvision.transforms.functional import to_pil_image, pil_to_tensor
 
-from modules.io.utils import save_image_torch, save_mask_torch
+from modules.io.utils import save_image_torch
 
 from modules.depth.models import Metric3Dv2
 
@@ -16,13 +16,12 @@ image_b = pil_to_tensor(Image.open(image_b_path).convert("RGB"))
 
 images = torch.stack((image_a, image_b), dim=0)
 intrinsics = [535.2, 534.9, 512, 288]
-depth_pred_size = (616, 1064)
 
-metric3d = Metric3Dv2({"intrinsics": intrinsics, "depth_pred_size": depth_pred_size})
+metric3d = Metric3Dv2(intrinsics)
 preds = metric3d.predict({"images": images})
 
 depths = preds["depths"]
-save_image_torch(depths[0], "debug_1")
-save_image_torch(depths[1], "debug_2")
+save_image_torch(depths[0], "debug_1", output_dir="./tests/test_results")
+save_image_torch(depths[1], "debug_2", output_dir="./tests/test_results")
 
 metric3d.unload()

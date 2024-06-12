@@ -1,27 +1,78 @@
 from typing import Tuple, Dict
 
 import torch
-
-from modules.io.utils import save_image_torch
-from modules.core.interfaces import BaseLogger, BaseReconstructor
+import torch.nn.functional as F
 
 
-class Logger(BaseLogger):
-    def __init__(self, reconstructor: BaseReconstructor):
-        self.reconstructor = reconstructor
+def compute_target_intrinsics(
+        orig_intrinsics: Tuple[float, float, float, float],
+        orig_size: Tuple[int, int],
+        target_size:Tuple[int, int]
+        ) -> Tuple[Tuple[float, float, float, float], Tuple[int, int, int, int]]:
+    """
+    Computes new intrinsics after resizing an image to a given target size.
+    The function computes how the original image should be cropped such that the
+    aspect ratio (`H/W`) of the cropped image matches the ratio of `target_size`
+    specified by the user. Returns new intrinsics and the crop box as two
+    separate tuples. The crop box should be used to crop the input image before
+    resizing.
 
-    def log_step(self, state: Dict):
-        ids = [val.item() for val in state["ids"]]
+    Code inspired from `compute_target_intrinsics()` from MonoRec: https://github.com/Brummi/MonoRec/blob/81b8dd98b86e590069bb85e0c980a03e7ad4655a/data_loader/kitti_odometry_dataset.py#L318
 
-        # i iterates over the index within the batch
-        for i, frame_id in enumerate(ids):
-            for key, value in state.items():
-                if key == "ids":
-                    continue
-                if key == "depths":
-                    value[i, : , :, :] = 1 / (value[i, : ,: ,:] + 0.0001)
-                save_image_torch(value[i, :, : ,:], name=f"{frame_id}_{key}", output_dir=self.reconstructor.output_dir)
+    Returns:
+        `intrinsics`: The computed intrinsics for the resize `(fx, fy, cx, cy)`
+        `crop_box`: The crop rectangle to preserve ratio of height/width
+                of the target image size as an integer `(left, upper, right, lower)`-tuple.
+    """
+    height, width = orig_size
+    height_target, width_target = target_size
 
+    # Avoid extra computation if the original and target sizes are the same
+    if orig_size == target_size:
+        target_intrinsics = orig_intrinsics
+        crop_box = ()
+    else:
+        r = height / width
+        r_target = height_target / width_target
+        fx, fy, cx, cy = orig_intrinsics
+
+        if r >= r_target:
+            # Width stays the same, we compute new height to keep target ratio
+            new_height = r_target * width
+            crop_box = (
+                0,
+                (height - new_height) // 2,
+                width,
+                height - (height - new_height) // 2,
+            )
+
+            rescale = width / width_target  # equal to new_height / height_target
+            cx = cx / rescale
+            cy = (cy - (height - new_height) / 2) / rescale # need to shift center due to cropping
+
+        else:
+            # Height stays the same, we compute new width to keep target ratio
+            new_width = height / r_target
+            crop_box = (
+                (width - new_width) // 2,
+                0,
+                width - (width - new_width) // 2,
+                height,
+            )
+
+            rescale = height / height_target  # equal to new_width / width_target
+            cx = (cx - (width - new_width) / 2) / rescale
+            cy = cy / rescale
+
+        # Rescale the focal lenghts
+        fx = fx / rescale
+        fy = fy / rescale
+
+        # Set the attributes of the dataset class
+        target_intrinsics = (fx, fy, cx, cy)
+        crop_box = tuple([int(coord) for coord in crop_box]) # should only have ints
+
+    return target_intrinsics, crop_box
 
 def compute_occlusions(flow0: torch.Tensor, flow1: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     """
@@ -81,3 +132,51 @@ def unravel_batched_pcd_tensor(batched_tensor: torch.Tensor) -> torch.Tensor:
     return torch.cat(individual_tensors, dim=1)
 
 
+def shrink_bool_mask(mask: torch.Tensor, iterations: int = 1, kernel_size: int = 3):
+    """
+    Shrinks a given mask (reduces the number of True pixels) starting
+    from the borders of the mask by repeatedly applying min pooling to an image
+    `iterations` many times. This is useful to make the system more robust
+    to inaccuracies or missed pixels in the masks.
+
+    Since `torch` has no explicit min pooling the mask is first inverted and
+    max pooling is used.
+
+    `kernel_size` has to be an odd number for the same padding to work
+    """
+    if not kernel_size % 2 == 1:
+        raise ValueError("kernel_size for shrink_bool_mask() has to be an odd number!")
+
+    mask_inv = torch.logical_not(mask)
+
+    # Padding to keep the spatial shape the same
+    padding = int((kernel_size - 1) / 2)
+
+    # TODO figure out a better way instead of using stride 1 to keep spatial dims the same
+    for i in range(iterations):
+        mask_inv = F.max_pool2d(mask_inv.float(), kernel_size=kernel_size, stride=1, padding=padding)
+        mask_inv = mask_inv.bool()
+
+    # Invert again to get original mask
+    mask = torch.logical_not(mask_inv)
+
+    return mask
+
+
+def grow_bool_mask(mask: torch.Tensor, iterations: int = 1, kernel_size: int = 3):
+    """
+    Grows the region with True values of a boolean tensor by applying max pooling
+    `iterations` many times. Does the opposite `shrink_bool_mask()`
+    """
+    if not kernel_size % 2 == 1:
+        raise ValueError("kernel_size for grow_bool_mask() has to be an odd number!")
+
+    # Padding to keep the spatial shape the same
+    padding = int((kernel_size - 1) / 2)
+
+    # TODO figure out a better way instead of using stride 1 to keep spatial dims the same
+    for i in range(iterations):
+        mask = F.max_pool2d(mask.float(), kernel_size=kernel_size, stride=1, padding=padding)
+        mask = mask.bool()
+
+    return mask
