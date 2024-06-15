@@ -3,6 +3,7 @@ import sys
 import argparse
 import logging
 from pathlib import Path
+from datetime import datetime
 
 import cv2
 
@@ -21,13 +22,12 @@ def main(args):
 
     # Setup logging
     log_path = data_dir.absolute() / Path("log_video.txt")
+    log_time = datetime.now().strftime('%Y-%m-%d:%H-%M-%S')
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Open the log file in write mode to clear it
-    with open(log_path, 'w'):
+    with open(log_path, 'w'): # to clear existing logs
         pass
-
     logging.basicConfig(filename=log_path, level=logging.INFO, format='%(levelname)s - %(message)s')
+    logging.info(f"Log file for '1_extract_frames_from_video.py', created at (year-month-day:hour-minute-second): {log_time}")
     logging.info(f"Arguments: \n{json.dumps(vars(args), indent=4)}")
 
     if not should_continue:

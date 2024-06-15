@@ -3,6 +3,7 @@ import argparse
 import logging
 from pathlib import Path
 from typing import NamedTuple
+from datetime import datetime
 
 import cv2
 import torch
@@ -34,11 +35,12 @@ def main(args):
 
     # Setup logging
     log_path = data_dir.absolute() / Path("log_depth_and_normal.txt")
+    log_time = datetime.now().strftime('%Y-%m-%d:%H-%M-%S')
     with open(log_path, 'w'): # to clear existing log files
         pass
     logging.basicConfig(filename=log_path, level=logging.INFO, format='%(levelname)s - %(message)s')
-    # logging.info(f"Arguments: \n{json.dumps(vars(args), indent=4)}")
-    logging.info(f"Arguments: \n{args}") # TODO remove after debug
+    logging.info(f"Log file for '3_precompute_depth_and_normals.py', created at (year-month-day:hour-minute-second): {log_time}")
+    logging.info(f"Arguments: \n{json.dumps(vars(args), indent=4)}")
 
     if not skip_depth_png and (max_depth_png * scale_factor_depth_png >= 2**16):
         raise ValueError(f"The maximum depth threshold ({max_depth_png}) and the scale factor ({scale_factor_depth_png}) you chose for saving the depths as png images exceeds the largest unsigned integer that can be represented by 16-bits, please lower the scale or the maximum depth!")
@@ -83,6 +85,7 @@ def main(args):
         logging.warning(f"Normal png directory '{str(normal_png_dir)}' is not empty and you chose not to continue. Aborting.")
         return -1
 
+    logging.info(f"Iterating through every path in {str(image_dir)} and predicting depths/normals for each image. This might take a while...")
     for image_path in tqdm(image_dir.iterdir()):
         if image_path.is_file() and image_path.suffix == ".png":
             frame_id = image_path.stem # no extension, has padded zeros
@@ -138,7 +141,7 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Predict and save depth and normal predictions as numpy arrays. Optionally saves depth predictions as scaled 16-bit monochrome png images as well.")
+    parser = argparse.ArgumentParser(description="Predict and save depth and normal predictions as numpy arrays with the original sizes of the images. Optionally saves depth predictions as scaled 16-bit monochrome png images as well.")
     parser.add_argument("--root_dir", type=str, help="The root of your data directory.")
     parser.add_argument("--model", type=str, help="The model to get depth and normal predictions. Currently only metric3Dv2 is implemented which gives both depth and normal predictions.")
     parser.add_argument("--intrinsics", type=float, nargs=4, help="Camera intrinsics as [fx, fy, cx, cy]. Run '2_run_colmap.py' to get them. If you already have intrinsics, make sure to scale them with the same factor you are resizing your images (dividing image dimensions by 2 -> dividing intrinsic parameters by 2)")
