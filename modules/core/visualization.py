@@ -1,8 +1,11 @@
 from pathlib import Path
+from typing import Tuple, Union
 
+import numpy as np
 import torch
 from torchvision.transforms.functional import to_pil_image, to_tensor
 import matplotlib.pyplot as plt
+
 
 def visualize_flow(flow: torch.Tensor, original_image: torch.Tensor = None, flow_vis_step=15, output_path="debug_flow"):
     """

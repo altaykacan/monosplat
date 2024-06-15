@@ -1,14 +1,16 @@
 """Utility functions for data and input-output related operations"""
 import logging
-import shutil
 import json
 from pathlib import Path
+from datetime import datetime
 from typing import Union, List, Callable, Tuple, Dict
 
 import cv2
 import torch
 import numpy as np
+import open3d as o3d
 import matplotlib.pyplot as plt
+from plyfile import PlyData
 
 from configs.data import SUPPORTED_DATASETS
 from modules.core.interfaces import BaseLogger, BaseReconstructor
@@ -81,8 +83,14 @@ def ask_to_clear_dir(dir_path: Union[str, Path]) -> bool:
                 for file in dir_path.iterdir():
                     if file.is_file():
                         file.unlink()
+
                 should_continue = True
+                still_not_empty = any(dir_path.iterdir())
+                if still_not_empty:
+                    print("The directory is still not empty. There must be subdirectories, please delete them manually and run this script again!")
+                    should_continue = False
                 break
+
             elif answer.lower() == "no":
                 print(f"Not deleting existing files at {str(dir_path)} and aborting...")
                 should_continue = False
@@ -91,6 +99,7 @@ def ask_to_clear_dir(dir_path: Union[str, Path]) -> bool:
             print("Please type 'yes' or 'no'")
 
     return should_continue
+
 
 def find_latest_number_in_dir(dir_path: Union[str, Path]) -> int:
     """
@@ -157,7 +166,7 @@ def get_parse_and_stamp_fn(dataset: str) -> Tuple[Callable, Callable]:
     elif dataset == "tum_rgbd":
         dataset_class = TUMRGBDDataset
     elif dataset  == "colmap":
-        raise NotImplementedError("Will do this soon!")
+        dataset_class = COLMAPDataset
     elif dataset not in SUPPORTED_DATASETS:
         raise NotImplementedError(f"The dataset you specified ({dataset}) is not supported yet, supported datasets are: {str(SUPPORTED_DATASETS)}")
     else:
@@ -192,14 +201,22 @@ def read_all_poses_and_stamps(pose_path: Union[Path, str], dataset: str = "custo
             continue
         cols = pose_row.split(" ")
 
-        pose = parse_fn(cols)
-        stamp = stamp_fn(cols) # returns None if the dataset doesn't support timestamps in pose file
-        poses.append(pose)
-        stamps.append(stamp)
+        pose = parse_fn(cols) # returns None if row should be skipped (relevant for COLMAP)
+        if pose is None:
+            continue
+        else:
+            stamp = stamp_fn(cols) # returns None if the dataset doesn't support timestamps in pose file
+            poses.append(pose)
+            stamps.append(stamp)
+
+    # Sort the poses and stamps in increasing order
+    zipped = sorted(zip(stamps, poses))
+    poses = [pair[1] for pair in zipped]
+    stamps = [pair[0] for pair in zipped]
 
     poses = torch.stack(poses, dim=0)
 
-    # If the stamps are None (no frame id in pose file), we simply enumerate the images
+    # If the stamps are None (no frame id in pose file), we simply enumerate the images (relevant for KITTI)
     if stamps[0] is None:
         stamps = [i for i in range(len(poses))]
 
@@ -253,6 +270,7 @@ def create_rgb_txt(path: Path, image_dir: Path):
     image_dir = Path(image_dir)
 
     image_names = []
+    log_time = datetime.now().strftime('%Y-%m-%d:%H-%M-%S')
 
     for p in image_dir.iterdir():
         if p.is_file() and p.suffix == ".png":
@@ -261,7 +279,7 @@ def create_rgb_txt(path: Path, image_dir: Path):
     out_path = path / Path("rgb.txt")
     with open(out_path, "w") as out_file:
         out_file.write("# color images\n")
-        out_file.write("# in the TUM RGB-D dataset format\n")
+        out_file.write(f"# in the TUM RGB-D dataset format, created at (year-month-day:hour-minute-second): {log_time}\n")
         out_file.write("# timestamp path\n")
         for image_path in image_names:
             timestamp = float(image_path.stem) # no extension
@@ -281,6 +299,7 @@ def create_depth_txt(path: Union[Path, str], image_dir: Union[Path, str]):
     image_dir = Path(image_dir)
 
     image_names = []
+    log_time = datetime.now().strftime('%Y-%m-%d:%H-%M-%S')
 
     for p in image_dir.iterdir():
         if p.is_file() and p.suffix == ".png":
@@ -289,7 +308,7 @@ def create_depth_txt(path: Union[Path, str], image_dir: Union[Path, str]):
     out_path = path / Path("depth.txt")
     with open(out_path, "w") as out_file:
         out_file.write("# depth images\n")
-        out_file.write("# in the TUM RGB-D dataset format\n")
+        out_file.write(f"# in the TUM RGB-D dataset format, created at (year-month-day:hour-minute-second): {log_time}\n")
         out_file.write("# timestamp path\n")
         for image_path in image_names:
             timestamp = float(image_path.stem) # no extension
@@ -299,6 +318,57 @@ def create_depth_txt(path: Union[Path, str], image_dir: Union[Path, str]):
 # TODO implement
 def create_associations_txt():
     pass
+
+
+# TODO implement
+def create_scales_and_shifts_txt(
+        depth_paths: Union[Path, str],
+        scales: Union[torch.Tensor, float],
+        shifts: Union[torch.Tensor, float],
+        pose_path: Union[Path, str],
+        stamps: List[int],
+        ) -> None:
+    """
+    Expects the scales and shifts to apply to each depth prediction individually
+    as `[num_frames]` tensors. Stamps is a list of integers that give the timestamps
+    of frames with poses so we can only save the depths with poses. This is important
+    because only those depths have calculated scale and shift values.
+
+    Saves the output at the same directory as `pose_path` in a txt file with the format:
+
+    ```
+    # Scale factors and shifts to apply to each depth prediction for 'pose_path'
+    # scale and shift are floats
+    precomputed_depth_path timestamp scale shift
+    ```
+    """
+    file_path = pose_path.parent / Path("scales_and_shifts.txt")
+    log_time = datetime.now().strftime('%Y-%m-%d:%H-%M-%S')
+
+    if isinstance(scales, float):
+        scales = torch.ones_like(torch.tensor(stamps)) * scales
+    if isinstance(shifts, float):
+        shifts = torch.ones_like(torch.tensor(stamps)) * shifts
+
+    # Get matching depth paths
+    matching_depth_paths = []
+    depth_ids = [int(p.stem) for p in depth_paths]
+    for curr_stamp in stamps:
+        depth_idx = depth_ids.index(curr_stamp)
+        matching_depth_paths.append(depth_paths[depth_idx])
+
+    if len(matching_depth_paths) != len(scales) and len(matching_depth_paths) != len(stamps) and len(matching_depth_paths) != len(shifts):
+        raise RuntimeError("Please check your depth paths and your stamps. The number of computed scales and shifts do not match the number of your precomputed depths.")
+
+    # Write to file
+    log.info(f"Writing scales and shifts as a txt file at {str(file_path)}...")
+    with open(file_path, "w") as file:
+        file.write(f"# Scale factors and shifts to apply to each depth prediction for {pose_path.name}")
+        file.write(f"# scale and shift values are floats, created at (year-month-day:hour-minute-second): {log_time}")
+        file.write("# precomputed_depth_path timestamp scale shift")
+        for i in range(len(stamps)):
+            file.write(f"{matching_depth_paths[i]} {stamps[i]} {scales[i].item()} {shifts[i].item()}")
+    log.info(f"Wrote scales_and_shifts.txt")
 
 
 def read_deepscenario_sparse_cloud(filename: Union[str, Path]) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -394,3 +464,45 @@ def save_poses_as_ply(poses: List[torch.Tensor], scale: float = 1.0, filename: U
         header=ply_header,
         comments="",
     )
+
+
+def read_ply(path: Union[str, Path]) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Reads in a .ply file using PlyReader describing a point cloud and returns
+    two torch tensors, one for the xyz coordinates of the points and the other
+    for the RGB values.
+    """
+    if isinstance(path, str):
+        path = Path(path)
+
+    with open(path, "rb") as f:
+        plydata = PlyData.read(f)  # read as a PlyData object
+
+    # plydata.elements is a tuple and contains a memory-mapped array
+    data = np.array(plydata.elements[0].data)
+
+    # Each row of data is a structured data type transpose to have each row as a point
+    xyz = np.array([data["x"], data["y"], data["z"]], dtype=np.float64).T
+    rgb = np.array([data["red"], data["green"], data["blue"]], dtype=np.uint8).T
+
+    num_points = xyz.shape[0]
+    assert (
+        num_points == plydata.elements[0].count
+    ), "Number of points extracted from ply file don't match the amount in the file, please check your input!"
+    assert (
+        len(plydata.elements) == 1
+    ), f"Expected to find one element in plydata, found {len(plydata.elements)}, please check your input!"
+
+    return torch.from_numpy(xyz), torch.from_numpy(rgb)
+
+
+def read_ply_o3d(path: Union[str, Path], convert_to_float32: bool = False) -> o3d.geometry.PointCloud:
+    """Reads in a .ply file describing a point cloud and returns PointCloud
+    object from open3d"""
+    if isinstance(path, Path):
+        path = str(path)
+
+    pcd = o3d.t.io.read_point_cloud(path)
+    if convert_to_float32:
+        pcd.point.positions = pcd.point.positions.to(o3d.core.Dtype.Float32) # sparse projection doesn't like float32
+    return pcd

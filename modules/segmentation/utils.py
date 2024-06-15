@@ -25,7 +25,6 @@ def mmseg_get_class_ids(class_names: List[str], dataset: str = "CITYSCAPES") -> 
 
                 if not match_found:
                     class_ids.append(-1)
-
         else:
             raise NotImplementedError(
                 f"Dataset '{dataset}' not recognized, try 'CITYSCAPES'"

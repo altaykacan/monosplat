@@ -143,7 +143,31 @@ class BaseDataset(ABC):
         pass
 
     @abstractmethod
+    def parse_image_path_and_frame_id(self, cols: List[str]) -> Tuple[Path, int]:
+        pass
+
+    @abstractmethod
+    def load_gt_depth_paths(self) -> None:
+        pass
+
+    @abstractmethod
+    def load_depth_paths(self) -> None:
+        pass
+
+    @abstractmethod
+    def parse_frame_id(cls, cols: List[str]) -> int:
+        pass
+
+    @abstractmethod
+    def parse_pose(cls, cols: List[str]) -> torch.Tensor:
+        pass
+
+    @abstractmethod
     def preprocess(self, image: torch.Tensor) -> torch.Tensor:
+        pass
+
+    @abstractmethod
+    def get_by_frame_ids(self, frame_ids: List[int]) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         pass
 
     @abstractmethod

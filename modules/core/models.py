@@ -36,7 +36,7 @@ class OpticalFlowModel(BaseModel):
         if len(input_dict["image_b"].shape) != 4:
             raise ValueError
 
-    def _check_output(self):
+    def _check_output(self, output_dict: Dict):
         pass
 
 

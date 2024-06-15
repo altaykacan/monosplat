@@ -251,10 +251,19 @@ class PrecomputedDepthModel(DepthModel):
         for frame_id in frame_ids:
             idx = self._dataset.frame_ids.index(frame_id)
             depth_path = self._dataset.depth_paths[idx]
-            depth = torch.from_numpy(np.load(depth_path)).float() # [H , W]
-            depths.append(depth.unsqueeze(0)) # [1, H, W]
+            depth = torch.from_numpy(np.load(depth_path)).float().unsqueeze(0) # [1, H , W]
 
-        depths = torch.stack(depths, dim=0).to(self._device) # [N, 1, H, W]
+            # TODO apply the scale and shift factors to depth map, dataset should read the scales_and_shifts.txt
+            if self._dataset.scales != [] and self._dataset.shifts != []:
+                pass
+
+            # Resize and crop the depth according to the target_size of dataset
+            if self._dataset.size != self._dataset.orig_size:
+                depth = self._dataset.preprocess(depth) # [1, H_new, W_new]
+
+            depths.append(depth)
+
+        depths = torch.stack(depths, dim=0).to(self._device) # [N, 1, H_new, W_new]
 
         return {"depths": depths}
 

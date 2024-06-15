@@ -24,6 +24,24 @@ def round_results(results: Dict, decimal_point: int) -> Dict:
     return results
 
 
+def compute_mean_recursive(results: Dict) -> float:
+    "Parses all elements of a numeric dictionary and recursively computes the mean"
+    def compute_mean_helper(data: Dict, accumulator: List):
+        for key, value in data.items():
+            if isinstance(value, torch.Tensor):
+                accumulator.append(value.mean().item())
+            elif isinstance(value, dict):
+                compute_mean_helper(value, accumulator)
+            elif isinstance(value, (int, float)):
+                accumulator.append(value) # ignores non-numeric types
+
+    accumulator = []
+    compute_mean_helper(results, accumulator)
+    overall_mean = (sum(accumulator) / len(accumulator)) if accumulator else 0
+    return overall_mean
+
+
+
 def extract_translations_from_poses(poses: torch.Tensor) -> torch.Tensor:
     """
     Expects `[N, 4, 4]` poses for `N` points on the trajectories and

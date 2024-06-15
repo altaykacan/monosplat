@@ -1,4 +1,4 @@
-from typing import Tuple, Dict
+from typing import Tuple, Dict, List
 
 import torch
 import torch.nn.functional as F
@@ -74,14 +74,24 @@ def compute_target_intrinsics(
 
     return target_intrinsics, crop_box
 
+
+def format_intrinsics(intrinsics: List[float]) -> torch.Tensor:
+    """Formats the intrinsics to be a 3x3 projection matrix for a pinhole camera model"""
+    fx, fy, cx, cy = intrinsics
+    return torch.tensor(
+        [[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=torch.double, requires_grad=False
+    )
+
+
 def compute_occlusions(flow0: torch.Tensor, flow1: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Function to generate occlusion masks by checking forward and backward
     flow computations (`flow0`: image 1 -> image 2 and `flow1`: image 2 -> image 1)
 
     The outputs `mask0` represents a boolean mask with pixels in image 1 not
-    visible in image 2 set to False. On the other hand, `mask1` is a boolean
-    mask with pixels in image 2 not visible in image 1.
+    visible in image 2 set to False (occlusion_mask).
+    On the other hand, `mask1` is a boolean mask with pixels in image 2 not
+    visible in image 1 (disocclusion mask).
 
     Code provided by Felix Wimbauer (https://github.com/Brummi)
     """
@@ -112,6 +122,7 @@ def compute_occlusions(flow0: torch.Tensor, flow1: torch.Tensor) -> Tuple[torch.
     mask1[nxy_0[:, 0, :].long(), 0, ((nxy_0[:, 2, :] * .5 + .5) * h).round().long().clamp(0, h-1), ((nxy_0[:, 1, :] * .5 + .5) * w).round().long().clamp(0, w-1)] = 1
 
     return mask0.bool(), mask1.bool()
+
 
 def unravel_batched_pcd_tensor(batched_tensor: torch.Tensor) -> torch.Tensor:
     """

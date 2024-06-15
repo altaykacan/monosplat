@@ -29,10 +29,11 @@ class CustomDataset(BaseDataset):
             pose_path: Union[Path, str],
             pose_scale: float,
             orig_intrinsics: Tuple,
-            orig_size: Tuple,
+            orig_size: Tuple = (),
             target_size: Tuple = (),
             gt_depth_dir: Union[Path, str] = None,
             depth_dir: Union[Path, str] = None,
+            scales_and_shifts_path: Union[Path, str] = None,
             start: int = 0,
             end: int = -1,
             device: str = None
@@ -51,13 +52,20 @@ class CustomDataset(BaseDataset):
             self.depth_dir = None
             self.has_depth = False
         else:
-            self.depth_dir = gt_depth_dir if isinstance(gt_depth_dir, Path) else Path(gt_depth_dir)
+            self.depth_dir = depth_dir if isinstance(depth_dir, Path) else Path(depth_dir)
             self.has_depth = True
 
         self.pose_scale = pose_scale
-        self.orig_size = orig_size
+        self.scales_and_shifts_path = scales_and_shifts_path
+        if orig_size == ():
+            first_path = next(self.image_dir.iterdir())
+            first_image = tv_F.pil_to_tensor(Image.open(first_path)) # [C, H, W]
+            self.orig_size = (first_image.shape[1], first_image.shape[2]) # tuple of height and width pixels
+        else:
+            self.orig_size = orig_size
+
         self.orig_intrinsics = orig_intrinsics
-        self.size = target_size if target_size != () else orig_size
+        self.size = target_size if target_size != () else self.orig_size
         self.intrinsics = ()
         self.crop_box = ()
 
@@ -65,6 +73,8 @@ class CustomDataset(BaseDataset):
         self.image_paths = []
         self.gt_depth_paths = [] # for ground truth depth
         self.depth_paths = [] # for precomputed depth
+        self.scales = [] # for precomputed depth
+        self.shifts = [] # for precomputed depth
         self.poses = []
 
         self.start = start
@@ -91,7 +101,7 @@ class CustomDataset(BaseDataset):
             self.load_gt_depth_paths() # load in ground truth depth paths if needed
 
         if self.has_depth:
-            self.load_depth_paths() # load in precomputed depth paths if needed
+            self.load_depth_paths() # load in precomputed depth paths with scale and shifts if needed
 
     def parse_image_path_and_frame_id(self, cols: List[str]) -> Tuple[Path, int]:
         frame_id = self.parse_frame_id(cols)
@@ -100,7 +110,7 @@ class CustomDataset(BaseDataset):
 
         return image_path, frame_id
 
-    def load_gt_depth_paths(self):
+    def load_gt_depth_paths(self) -> None:
         # frame_ids are already truncated, no need to do it again for depths
         for frame_id in self.frame_ids:
             depth_path = Path(self.gt_depth_dir, f"{frame_id:0{PADDED_IMG_NAME_LENGTH}}.npy")
@@ -112,15 +122,19 @@ class CustomDataset(BaseDataset):
 
         return None
 
-    def load_depth_paths(self):
+    def load_depth_paths(self) -> None:
         # frame_ids are already truncated, no need to do it again for depths
         for frame_id in self.frame_ids:
             depth_path = Path(self.depth_dir, f"{frame_id:0{PADDED_IMG_NAME_LENGTH}}.npy")
-
             if not depth_path.is_file():
                 raise FileNotFoundError(f"The precomputed depth value at '{depth_path}' can't be found. Please check your data at '{self.depth_dir}' or trying running '3_precompute_depth_and_normals.py' again.")
 
             self.depth_paths.append(depth_path)
+
+        # TODO implement
+        # Read in the scale and shift values if the path is given
+        if self.scales_and_shifts_path is not None:
+            pass
 
         return None
 
@@ -201,6 +215,12 @@ class CustomDataset(BaseDataset):
                 self.image_paths.append(image_path)
                 self.poses.append(pose)
 
+        # Sort all three lists by increasing timestamp (frame id) value
+        zipped = sorted(zip(self.frame_ids, self.image_paths, self.poses))
+        self.frame_ids = [el[0] for el in zipped]
+        self.image_paths = [el[1] for el in zipped]
+        self.poses = [el[2] for el in zipped]
+
         if len(self.poses) == 0:
             raise RuntimeError(f"No poses have been read, please check your pose file at '{self.pose_path}'. Tip: Make sure the number of zeros padded for image file names (in configs/data.py) matches your dataset")
 
@@ -222,10 +242,10 @@ class CustomDataset(BaseDataset):
                                             self.size)
         return None
 
-
     def preprocess(self, image: torch.Tensor) -> torch.Tensor:
         """
-        Resize and crop the given image using torch interpolation and torchvision.
+        Resize and crop the given image using torch interpolation and torchvision
+        for cropping.
 
         Converts the `crop_box` notation to match the torchvision format.
         Coordinate system origin is at the top left corner, x is horizontal
@@ -235,8 +255,10 @@ class CustomDataset(BaseDataset):
             `images`: Unbatched tensors to resize and crop with shape `[C, H, W]`
         """
         C, H, W = image.shape
-
         crop_box = self.crop_box
+
+        if self.orig_size == self.size:
+            return image
 
         # Need to convert (left, upper, right, lower) to the torchvision format
         if crop_box != ():
@@ -289,6 +311,33 @@ class CustomDataset(BaseDataset):
             self.frame_ids = self.frame_ids[self.start_idx:self.end_idx]
             self.image_paths = self.image_paths[self.start_idx:self.end_idx]
             self.poses = self.poses[self.start_idx:self.end_idx]
+
+    def get_by_frame_ids(self, frame_ids: List[int]) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Returns a batch of `frame_id`, `image` and `scaled_pose` based on
+        the list frame ids as input.
+        """
+        out_frame_ids = []
+        out_images = []
+        out_scaled_poses = []
+
+        for target_frame_id in frame_ids:
+            try:
+                idx = self.frame_ids.index(target_frame_id)
+            except ValueError:
+                log.warning(f"Couldn't find the frame id {target_frame_id} in 'CustomDataset.get_by_frame_ids()'. Stopping collecting batch.")
+                break
+
+            frame_id, image, scaled_pose = self.__getitem__(idx)
+            out_frame_ids.append(frame_id)
+            out_images.append(image)
+            out_scaled_poses.append(scaled_pose)
+
+        out_frame_ids = torch.stack(out_frame_ids, dim=0)
+        out_images = torch.stack(out_images, dim=0)
+        out_scaled_poses = torch.stack(out_scaled_poses, dim=0)
+
+        return out_frame_ids, out_images, out_scaled_poses
 
     def __len__(self) -> int:
         return len(self.poses)
@@ -416,8 +465,8 @@ class TUMRGBDDataset(CustomDataset):
 
 
 class COLMAPDataset(CustomDataset):
-    def __init__(self, colmap_dir: Union[Path, str], pose_scale: float, orig_intrinsics: Tuple, orig_size: Tuple, target_size: Tuple = (), gt_depth_dir: Union[Path, str] = None,  start: int = 0, end: int = -1):
-        image_dir = Path(colmap_dir) / Path("images")
+    def __init__(self, colmap_dir: Union[Path, str], pose_scale: float, orig_intrinsics: Tuple, orig_size: Tuple = (), target_size: Tuple = (), gt_depth_dir: Union[Path, str] = None, depth_dir: Union[Path, str] = None, start: int = 0, end: int = -1):
+        image_dir = Path(colmap_dir) / Path("../../data/rgb")
         data_dir = Path(colmap_dir) / Path("sparse/0")
         pose_txt = data_dir / Path("images.txt")
         points_txt = data_dir / Path("points3D.txt")
@@ -430,7 +479,7 @@ class COLMAPDataset(CustomDataset):
             raise FileNotFoundError(f"Can't find the points3D files in {str(points_txt)}. If you only have .bin files, please run 'colmap model_converter --input_path 0 --output_path 0 --output_type TXT' in the right directory to convert binary files to txt files.")
 
         self.load_colmap_map(points_txt) # populates self.pcd
-        super().__init__(image_dir, pose_txt, pose_scale, orig_intrinsics, orig_size, target_size, gt_depth_dir, start, end)
+        super().__init__(image_dir, pose_txt, pose_scale, orig_intrinsics, orig_size, target_size, gt_depth_dir, depth_dir, start=start, end=end)
 
     def load_colmap_map(self, points_txt: Path):
         """
@@ -453,7 +502,7 @@ class COLMAPDataset(CustomDataset):
                 else:
                     line_split = line.split(" ")
 
-                    id, x, y, z, r, g, b = line_split[0:7]
+                    point_id, x, y, z, r, g, b = line_split[0:7]
 
                     # Open3D needs normalized integer values for RGB
                     r = int(r) / 255
@@ -500,6 +549,13 @@ class COLMAPDataset(CustomDataset):
         the `qw` comes first in the quaternion. These are in contrast to the
         TUM RGB-D dataset format that we follow.
         """
+        # Skip the lines which have the POINTS2D information
+        if len(cols) > 10:
+            return None
+        last_col_extension = cols[-1].split(".")[-1]
+        if last_col_extension.lower() not in ["jpg", "jpeg", "png"]:
+            return None
+
         # Get rotation from quaternion and translation as tensors
         quaternion = cols[1:5]  # still list of strings
         qw, qx, qy, qz = quaternion # qw first
@@ -570,6 +626,12 @@ class COLMAPDataset(CustomDataset):
                         self.frame_ids.append(frame_id)
                         self.image_paths.append(image_path)
                         self.poses.append(pose)
+
+            # Sort all three lists by increasing timestamp (frame id) value
+            zipped = sorted(zip(self.frame_ids, self.image_paths, self.poses))
+            self.frame_ids = [el[0] for el in zipped]
+            self.image_paths = [el[1] for el in zipped]
+            self.poses = [el[2] for el in zipped]
 
             if len(self.poses) == 0:
                 raise RuntimeError(f"No poses have been read, please check your pose file at '{self.pose_path}'. Tip: Make sure the number of zeros padded for image file names (in configs/data.py) matches your dataset")
