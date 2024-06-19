@@ -94,14 +94,20 @@ class BaseReconstructor(ABC):
         pass
 
     @abstractmethod
-    def step(self, ids, images, poses):
+    def step(self, ids: List[int], images: torch.Tensor, poses: torch.Tensor, context: Dict):
         """One step of the reconstruction process. Specific to reconstructors"""
         pass
 
-    @abstractmethod
     def parse_config(self, cfg: Dict):
-        """Parses the configuration dictionary and sets instance variables"""
-        pass
+        """
+        Parses the configuration dictionary for each reconstructor and sets
+        the corresponding attributes of the reconstructor. Each reconstructor
+        can define it's own `parse_config()` method. Common attributes are
+        parsed and set in the interface definition `BaseReconstructor`
+        """
+        self.output_dir = Path(cfg.get("output_dir", "."))
+        self.batch_size = cfg.get("batch_size", 2)
+        self.log_every_nth_batch = cfg.get("log_every_nth_batch", 50)
 
 class BaseBackprojector(ABC):
     @abstractmethod
@@ -110,12 +116,13 @@ class BaseBackprojector(ABC):
         Backprojects pixels based on depth and masks, converts the 3D points
         to world coordinates from the camera frame using the poses. Returns a
         tuple of the `xyz` coordinates and the associated value from `values`
-        for each point as `[C, num_points]`
+        for each point as `[C, num_points]`. Only backprojects pixels that
+        are `True` in `masks`
         """
         pass
 
     @abstractmethod
-    def compute_backprojection_masks(self, images: torch.Tensor, depths: torch.Tensor) -> torch.Tensor:
+    def compute_backprojection_masks(self, images: torch.Tensor, depths: torch.Tensor, depth_scales: torch.Tensor, depth_shifts: torch.Tensor) -> torch.Tensor:
         """
         Computes which pixels should be included in the backprojection, returns
         the masks as `[N, 1, H, W]` tensors with pixels to backproject as `True`
@@ -168,6 +175,10 @@ class BaseDataset(ABC):
 
     @abstractmethod
     def get_by_frame_ids(self, frame_ids: List[int]) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        pass
+
+    @abstractmethod
+    def get_depth_scale_shift_by_frame_ids(self, frame_ids: Union[List[int], torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
         pass
 
     @abstractmethod

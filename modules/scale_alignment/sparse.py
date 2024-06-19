@@ -77,7 +77,6 @@ def least_squares_scale_and_shift(prediction: torch.Tensor, target: torch.Tensor
     return scales, shifts
 
 
-# TODO implement
 def do_sparse_alignment(
         poses: torch.Tensor,
         stamps: List[int],
@@ -85,6 +84,7 @@ def do_sparse_alignment(
         depth_paths: List[Path],
         intrinsics: List[float],
         ignore_masks: torch.Tensor = None,
+        min_d: float = 0.0,
         max_d: float = 30.0,
         log_dir: Path = Path("."),
         ) -> Tuple[torch.Tensor, torch.Tensor]:

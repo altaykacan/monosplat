@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from plyfile import PlyData
 
 from configs.data import SUPPORTED_DATASETS
+from modules.core.maps import PointCloud
 from modules.core.interfaces import BaseLogger, BaseReconstructor
 from modules.io.datasets import CustomDataset, KITTI360Dataset, KITTIDataset, TUMRGBDDataset, COLMAPDataset
 
@@ -28,7 +29,11 @@ def save_image_torch(tensor: torch.Tensor, name: str = "debug", output_dir: Unio
     if not output_dir.is_dir():
         logging.warning(f"Output directory for saving tensors '{str(output_dir)}' does not exist. Creating it...")
         output_dir.mkdir(exist_ok=True, parents=True)
-    output_path = output_dir / Path(f"{name}.png")
+
+    if (".png" not in str(name).lower()) or (".jpg" not in str(name).lower()):
+        output_path = output_dir / Path(f"{name}.png")
+    else:
+        output_path = output_dir / Path(name)
 
     if len(tensor.shape) == 4: # ignore rest of the batch
         tensor = tensor[0, :, :, :]
@@ -40,9 +45,46 @@ def save_image_torch(tensor: torch.Tensor, name: str = "debug", output_dir: Unio
         plt.imsave(output_path, tensor.detach().cpu().numpy())
 
 
+def clean_batch(batch: torch.Tensor, remove_list: List[int] = []) -> torch.Tensor:
+    """
+    Removes elements from a batched `[N, C, H, W]` torch tensor with the batch
+    indices that have `1` elements in `remove_list`. The batch elements that will not
+    be removed should have `0` in the corresponding places in `remove_list`.
+    Returns None if the cleaned batch is empty
+    """
+    if len(batch.shape) == 4:
+        N, C, H, W = batch.shape
+    else:
+        N = len(batch) # 1D tensor with a scalar value per batch element
+
+    if len(remove_list) == 0:
+        return batch
+
+    if N != len(remove_list):
+        raise ValueError(f"The size of your batch ({N}) does not match the size of remove_list ({remove_list})")
+
+    cleaned_batch = []
+    for i, batch_el in enumerate(batch):
+        if remove_list[i] == 1:
+            continue
+        else:
+            cleaned_batch.append(batch_el)
+
+    if len(cleaned_batch) == 0:
+        return None
+
+    if isinstance(cleaned_batch[0], torch.Tensor):
+        cleaned_batch = torch.stack(cleaned_batch, dim=0)
+    else:
+        cleaned_batch = torch.tensor(cleaned_batch)
+
+    return cleaned_batch
+
+
 class Logger(BaseLogger):
     def __init__(self, reconstructor: BaseReconstructor):
         self.reconstructor = reconstructor
+        self.output_dir = self.reconstructor.output_dir / Path("logs")
 
     def log_step(self, state: Dict):
         ids = [val.item() for val in state["ids"]]
@@ -54,7 +96,7 @@ class Logger(BaseLogger):
                     continue
                 if key == "depths":
                     value[i, : , :, :] = 1 / (value[i, : ,: ,:] + 0.0001)
-                save_image_torch(value[i, :, : ,:], name=f"{frame_id}_{key}", output_dir=self.reconstructor.output_dir)
+                save_image_torch(value[i, :, : ,:], name=f"{frame_id}_{key}", output_dir=self.output_dir)
 
 
 def ask_to_clear_dir(dir_path: Union[str, Path]) -> bool:
@@ -320,7 +362,6 @@ def create_associations_txt():
     pass
 
 
-# TODO implement
 def create_scales_and_shifts_txt(
         depth_paths: Union[Path, str],
         scales: Union[torch.Tensor, float],
@@ -363,11 +404,11 @@ def create_scales_and_shifts_txt(
     # Write to file
     log.info(f"Writing scales and shifts as a txt file at {str(file_path)}...")
     with open(file_path, "w") as file:
-        file.write(f"# Scale factors and shifts to apply to each depth prediction for {pose_path.name}")
-        file.write(f"# scale and shift values are floats, created at (year-month-day:hour-minute-second): {log_time}")
-        file.write("# precomputed_depth_path timestamp scale shift")
+        file.write(f"# Scale factors and shifts to apply to each depth prediction for {pose_path.name}\n")
+        file.write(f"# scale and shift values are floats, created at (year-month-day:hour-minute-second): {log_time}\n")
+        file.write("# precomputed_depth_path timestamp scale shift\n")
         for i in range(len(stamps)):
-            file.write(f"{matching_depth_paths[i]} {stamps[i]} {scales[i].item()} {shifts[i].item()}")
+            file.write(f"{matching_depth_paths[i]} {stamps[i]} {scales[i].item()} {shifts[i].item()}\n")
     log.info(f"Wrote scales_and_shifts.txt")
 
 
@@ -497,8 +538,10 @@ def read_ply(path: Union[str, Path]) -> Tuple[torch.Tensor, torch.Tensor]:
 
 
 def read_ply_o3d(path: Union[str, Path], convert_to_float32: bool = False) -> o3d.geometry.PointCloud:
-    """Reads in a .ply file describing a point cloud and returns PointCloud
-    object from open3d"""
+    """
+    Reads in a .ply file describing a point cloud and returns PointCloud
+    object from open3d
+    """
     if isinstance(path, Path):
         path = str(path)
 
@@ -506,3 +549,45 @@ def read_ply_o3d(path: Union[str, Path], convert_to_float32: bool = False) -> o3
     if convert_to_float32:
         pcd.point.positions = pcd.point.positions.to(o3d.core.Dtype.Float32) # sparse projection doesn't like float32
     return pcd
+
+def save_pcd_o3d(
+        xyz: torch.Tensor,
+        rgb: torch.Tensor = None,
+        normals: torch.Tensor = None,
+        paint_color: str = None,
+        logdir: Union[str, Path] = ".",
+        filename: Union[str, Path] = "debug_cloud",
+        ) -> None:
+    """
+    Expects a `[3, num_points]` torch tensor describing the 3D coordinates of a
+    point cloud and optional `rgb` and `normals` tensors with the same shape
+    and saves it as a `.ply` in `filename`. Give filenames without the extensions.
+    Uses open3D and our custom `PointCloud` class. You can also paint the
+    whole point cloud to either `['white', 'red', 'green', 'pink', 'blue']`
+    """
+    if isinstance(logdir, str):
+        logdir = Path(logdir)
+    if isinstance(filename, str):
+        filename = Path(filename)
+
+    # RGB colors in range 0..1
+    valid_colors = {
+        'white': [1.0, 1.0, 1.0],
+        'red': [1.0, 0.059, 0.059],
+        'green': [0.376, 0.961, 0.259],
+        'pink': [0.929, 0.49, 0.961],
+        'blue': [0.49, 0.961, 0.953],
+        }
+
+    if (paint_color is not None) and not (paint_color in valid_colors.keys()):
+        raise ValueError(f"Provided '{paint_color}' is not in {list(valid_colors.keys())}. Please provide a valid color name.")
+
+    cloud = PointCloud()
+    cloud.increment(xyz, rgb, normals)
+    cloud.postprocess()
+    if paint_color is not None:
+        color_rgb = valid_colors[paint_color]
+        cloud.pcd = cloud.pcd.paint_uniform_color(color_rgb)
+
+    cloud.save(str(filename) + ".ply", logdir)
+

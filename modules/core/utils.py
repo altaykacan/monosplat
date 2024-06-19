@@ -2,7 +2,7 @@ from typing import Tuple, Dict, List
 
 import torch
 import torch.nn.functional as F
-
+import torchvision.transforms.functional as tv_F
 
 def compute_target_intrinsics(
         orig_intrinsics: Tuple[float, float, float, float],
@@ -75,6 +75,53 @@ def compute_target_intrinsics(
     return target_intrinsics, crop_box
 
 
+def resize_image_torch(image: torch.Tensor, target_size: tuple, crop_box: tuple = ()) -> torch.Tensor:
+        """
+        Resize and crop the given image using torch interpolation and torchvision
+        for cropping.
+
+        Converts the `crop_box` notation to match the torchvision format.
+        Coordinate system origin is at the top left corner, x is horizontal
+        (pointing right), y is vertical (pointing down)
+
+        Args:
+            `images`: Unbatched tensors to resize and crop with shape `[C, H, W]`
+            `target_size`: Size to resize to as a `(H, W)`-tuple
+            `crop_box`: The box to crop the original images before resizing such that
+                the aspect ratio of the to-be-transformed image becomes the same
+                as the specified aspect ratio in `target_size`. Box is represented
+                as `(left, upper, right, lower)` tuple
+        """
+        C, H, W = image.shape
+        orig_size = (H, W)
+
+        if orig_size == target_size:
+            return image
+
+        # Need to convert (left, upper, right, lower) to the torchvision format
+        if crop_box != ():
+            # Coordinates of the left top corner of the crop box
+            left_top_corner_y = crop_box[1]
+            left_top_corner_x = crop_box[0]
+
+            box_height = crop_box[3] - crop_box[1]  # lower - upper
+            box_width = crop_box[2] - crop_box[0]  # right - left
+            image = tv_F.crop(
+                image, left_top_corner_y, left_top_corner_x, box_height, box_width
+            )
+
+        # Using interpolate to have finer control, also RAFT doesn't work well with antialiased preprocessing
+        resized_image = torch.nn.functional.interpolate(
+            image.unsqueeze(0),
+            target_size,
+            mode="bilinear",
+            antialias=False,
+            align_corners=True,
+        ).squeeze(0)
+
+        return resized_image
+
+
 def format_intrinsics(intrinsics: List[float]) -> torch.Tensor:
     """Formats the intrinsics to be a 3x3 projection matrix for a pinhole camera model"""
     fx, fy, cx, cy = intrinsics
@@ -122,6 +169,57 @@ def compute_occlusions(flow0: torch.Tensor, flow1: torch.Tensor) -> Tuple[torch.
     mask1[nxy_0[:, 0, :].long(), 0, ((nxy_0[:, 2, :] * .5 + .5) * h).round().long().clamp(0, h-1), ((nxy_0[:, 1, :] * .5 + .5) * w).round().long().clamp(0, w-1)] = 1
 
     return mask0.bool(), mask1.bool()
+
+
+def get_correspondences_from_flow(flow: torch.Tensor, H: int, W: int):
+    """
+    Computes a correspondence tensor using the optical flow between
+    two images using `torch.nn.functional.grid_sample()`. The correspondences
+    have the shape `[N, 2, H, W]` and contain the new x and y coordinates that
+    the flow vectors point to from image 1 to image 2. Nearest neighbor
+    interpolation is used with `grid_sample()` to get integer pixel coordinates
+    in the second image. Example:
+    The position `(n, 1, i, j)` in the `correspondences` tensor has the `u`
+    (horizontal pixel coordinate) the pixel (i, j) in image 1 gets mapped to
+    in image 2 if you follow the flow vector at that position from image 1 to
+    image 2. The index `n` is used to index the images within the batch.
+
+    The flow values are added to the original coordinates and the new
+    coordinates are determined by taking the nearest coordinate point from the
+    second image. The points that fall out of bounds after adding the flow are
+    set to have the value zero.
+
+    PyTorch needs (N, C, H_in, W_in) input and a (N, H_out, W_out, 2) grid
+    for grid_sample where N is the batch size and C is the channel amount.
+
+    Args:
+        flow (Tensor): Tensor representing the optical flow, shape [N, 2, H, W]
+        H (int): Height of the image
+        W (int): Width of the image
+    """
+    N, _, H, W = flow.shape
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # Pixel coordinates, U and V are both [H, W]
+    U, V = torch.meshgrid([torch.arange(0, W), torch.arange(0, H)], indexing="xy")
+    UV = torch.stack((U, V), dim=2)  # [H, W, 2]
+    UV_source = UV.permute(2, 0, 1).unsqueeze(0)  # [1, 2, H, W], input
+    UV_source = UV_source.repeat(N, 1, 1, 1).float().to(device) # [N, 2, H, W]
+    UV_target = UV.unsqueeze(0).to(device)  # [1, H, W, 2], original positions
+
+    flow_in = flow.permute(0, 2, 3, 1).to(device)  # [N, H, W, 2], flow vector field
+    grid = UV_target + flow_in  # new positions after flow
+
+    # Grid needs to be normalized to [-1, 1] (normalized by image dimensions)
+    # (x - 0) / (W - 0) == (x_n - (-1)) / (1 - (-1))
+    grid[:, :, :, 0] = 2 * grid[:, :, :, 0] / (W - 1) - 1
+    grid[:, :, :, 1] = 2 * grid[:, :, :, 1] / (H - 1) - 1
+
+    # F.grid_sample already takes care of the reversed direction of the flows
+    # [N, 2, H, W]
+    correspondences = F.grid_sample(UV_source, grid, mode="nearest", padding_mode="zeros", align_corners=True)
+
+    return correspondences
 
 
 def unravel_batched_pcd_tensor(batched_tensor: torch.Tensor) -> torch.Tensor:

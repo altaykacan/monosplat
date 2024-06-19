@@ -57,3 +57,7 @@ def combine_segmentation_masks(masks_dict: Dict, combine_list: List[str] = []) -
         final_mask = torch.logical_or(masks_dict[class_name], final_mask) # aggregating the masks
 
     return final_mask
+
+# TODO implement
+def save_moving_obj_results():
+    pass

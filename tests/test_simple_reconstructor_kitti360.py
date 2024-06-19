@@ -3,11 +3,6 @@ import sys
 
 import torch
 
-# Needed to import custom code
-current_dir = os.path.dirname(os.path.realpath(__file__))
-parent_dir = os.path.dirname(current_dir)
-sys.path.insert(0, parent_dir)
-
 from modules.io.datasets import CustomDataset, KITTIDataset, KITTI360Dataset
 from modules.depth.models import Metric3Dv2, KITTI360DepthModel
 from modules.core.backprojection import Backprojector

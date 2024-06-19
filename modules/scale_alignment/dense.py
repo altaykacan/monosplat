@@ -25,13 +25,14 @@ def do_dense_alignment(
     dataset: BaseDataset,
     flow_steps: List[int],
     t_z_thresh: float = 0.1,
-    min_depth: float = 0.0,
-    max_depth: float = 100.0,
+    min_d: float = 0.0,
+    max_d: float = 50.0,
     min_flow: float = 0.2,
     mask_moveable_objects: bool = True,
     mask_occlusions: bool = True,
     log_dir: Path = Path("."),
     frame_idx_for_hist: int = 8,
+    log_every: int = 50,
     ) -> Dict:
     """
     Does dense scale alignment for each pair of images for multiple flow steps.
@@ -74,7 +75,8 @@ def do_dense_alignment(
     """
     scales = {}
     frame_scales_for_hist = {}
-    frame_ids_for_histogram = [dataset.frame_ids[i] for i in [0, frame_idx_for_hist, len(dataset) // 4, len(dataset) // 2, -1]]
+    scale_tensors_to_plot = {}
+    frame_ids_for_hist = [dataset.frame_ids[i] for i in [frame_idx_for_hist, 0, len(dataset) // 8, len(dataset) // 4, len(dataset) // 2, len(dataset) // 2 + 1, - (len(dataset) // 4), - (len(dataset) // 8)]]
     flow_model = RAFT()
     depth_model = PrecomputedDepthModel(dataset)
     if mask_moveable_objects:
@@ -89,10 +91,11 @@ def do_dense_alignment(
     for flow_step in flow_steps:
         scales[flow_step] = {}
         frame_scales_for_hist[flow_step] = {}
+        scale_tensors_to_plot[flow_step] = {}
 
         # TODO do this in a batched way with a DataLoader, we got the get_by_frame_ids function implemented, that should fix it!
         log.info(f"Processing each image pair for flow step {flow_step}. This might take some time...")
-        for i, (target_id, target_image, target_pose) in tqdm(enumerate(dataset)):
+        for i, (target_id, target_image, target_pose) in enumerate(tqdm(dataset)):
             try:
                 source_id, source_image, source_pose = dataset[i + flow_step]
             except IndexError:
@@ -112,41 +115,43 @@ def do_dense_alignment(
             target_mask = seg_masks[0].unsqueeze(0) # [1, 1, H, W]
             source_mask = seg_masks[1].unsqueeze(0)
 
-            curr_scale, t_z = align_scale_for_image_pair(
-                target_depth,
-                source_depth,
-                target_pose,
-                source_pose,
-                target_image,
-                source_image,
-                dataset.intrinsics,
-                flow_model,
-                target_mask,
-                source_mask,
-                min_depth,
-                max_depth,
-                min_flow,
-                mask_occlusions,
-            )
+            curr_scale, vis_tensor1, t_z = align_scale_for_image_pair(
+                                                target_depth,
+                                                source_depth,
+                                                target_pose,
+                                                source_pose,
+                                                target_image,
+                                                source_image,
+                                                dataset.intrinsics,
+                                                flow_model,
+                                                target_mask,
+                                                source_mask,
+                                                min_d,
+                                                max_d,
+                                                min_flow,
+                                                mask_occlusions,
+                                            )
 
-            curr_scale_rev, t_z_rev = align_scale_for_image_pair(
-                source_depth,
-                target_depth,
-                source_pose,
-                target_pose,
-                source_image,
-                target_image,
-                dataset.intrinsics,
-                flow_model,
-                source_mask,
-                target_mask,
-                min_depth,
-                max_depth,
-                min_flow,
-                mask_occlusions,
-            )
+            curr_scale_rev, vis_tensor2, t_z_rev = align_scale_for_image_pair(
+                                                source_depth,
+                                                target_depth,
+                                                source_pose,
+                                                target_pose,
+                                                source_image,
+                                                target_image,
+                                                dataset.intrinsics,
+                                                flow_model,
+                                                source_mask,
+                                                target_mask,
+                                                min_d,
+                                                max_d,
+                                                min_flow,
+                                                mask_occlusions,
+                                            )
 
-            log.info(f"Computed forward scale {curr_scale.mean().item()} and backwards scale {curr_scale_rev.mean().item()} for images {target_id}-{source_id}.")
+            if i % log_every == 0:
+                log.info(f"Computed forward scale {curr_scale.mean().item()} and backwards scale {curr_scale_rev.mean().item()} for images {target_id}-{source_id}.")
+
             mean_scale = (curr_scale.mean() + curr_scale_rev.mean()).item() / 2
             if mean_scale * t_z <= t_z_thresh:
                 log.warning(f"Scaled up t_z value is less than the threshold ({mean_scale * t_z} < {t_z_thresh}). Skipping images {target_id}-{source_id}")
@@ -154,16 +159,23 @@ def do_dense_alignment(
                 scales[flow_step][target_id] = mean_scale
 
             # Save variables for histogram
-            if target_id in frame_ids_for_histogram:
+            if target_id in frame_ids_for_hist:
                 frame_scales_for_hist[flow_step][target_id] = {"forward": curr_scale, "backward": curr_scale_rev}
+                scale_tensors_to_plot[flow_step][target_id] = {"forward": vis_tensor1, "backward": vis_tensor2}
 
-    frame_id_for_hist, _, _ = dataset[frame_idx_for_hist]
-    plot_dense_alignment_results(scales, frame_id_for_hist, frame_scales_for_hist, log_dir)
+    plot_dense_alignment_results(
+        scales,
+        frame_ids_for_hist,
+        frame_scales_for_hist,
+        scale_tensors_to_plot,
+        log_dir
+        )
 
     # Average over all flow steps, all frames, and both forward backward methods
     final_scale = compute_mean_recursive(scales)
+    log.info(f"Final computed scale value to multiply the poses with: {final_scale} (or multiply the depths with {1/final_scale})")
 
-    return final_scale
+    return 1 / final_scale
 
 
 def align_scale_for_image_pair(
@@ -181,11 +193,11 @@ def align_scale_for_image_pair(
     max_depth: float = 100.0,
     min_flow: float = 0.2,
     mask_occlusions: bool = True
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Aligns the scale of a depth model and the poses using a target and a source
-    image using dense correspondences from optical flow. Expects all inputs
-    to be batched tensors.
+    image using dense correspondences from optical flow. CURRENTLY DOES NOT SUPPORT
+    BATCHED COMPUTATION.
 
     The target frame is referenced as coordinate frame A and the source frame as
     B. The frame B' is the auxilary coordinate frame that we use that has the
@@ -275,7 +287,7 @@ def align_scale_for_image_pair(
     scales_tensor[mask] = scales
     cleaned_scales_tensor[mask] = scales * clean_mask
 
-    return cleaned_scales, t_z
+    return cleaned_scales, cleaned_scales_tensor, t_z
 
 
 def clean_scales(

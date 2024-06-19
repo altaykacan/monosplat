@@ -1,16 +1,23 @@
-from typing import Dict, Tuple
+from typing import Dict, Tuple, List
 
 import torch
 
-from modules.core.interfaces import BaseBackprojector
+from modules.core.interfaces import BaseBackprojector, BaseModel
 from modules.segmentation.models import SegmentationModel
+from modules.segmentation.utils import combine_segmentation_masks
 
 class Backprojector(BaseBackprojector):
     def __init__(self, cfg: Dict, intrinsics: Tuple):
         self.cfg = cfg
         self.intrinsics = intrinsics
 
-    def backproject(self, values: torch.Tensor, depths: torch.Tensor, poses: torch.Tensor, masks: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def backproject(
+            self,
+            values: torch.Tensor,
+            depths: torch.Tensor,
+            poses: torch.Tensor,
+            masks: torch.Tensor,
+            ) -> Tuple[torch.Tensor, torch.Tensor]:
         N, C, H, W = values.shape
         fx, fy, cx, cy = self.intrinsics
         device = depths.device
@@ -49,7 +56,12 @@ class Backprojector(BaseBackprojector):
 
         return xyz, values
 
-    def compute_backprojection_masks(self, images: torch.Tensor, depths: torch.Tensor) -> torch.Tensor:
+    def compute_backprojection_masks(
+            self,
+            images: torch.Tensor,
+            depths: torch.Tensor,
+            depth_scales: torch.Tensor = None,
+            depth_shifts: torch.Tensor = None) -> torch.Tensor:
         masks = torch.ones_like(depths).bool()
         device = depths.device
         N, C, H, W = masks.shape # C is 1
@@ -63,10 +75,16 @@ class Backprojector(BaseBackprojector):
             masks[:, :, :, : roi[2]] = False
             masks[:, :, :, roi[3] :] = False
 
-        # Maximum and minimum depths for backprojection
-        max_d = self.cfg.get("max_d", 50.0)
-        min_d = self.cfg.get("min_d", 0.0)
+        # Maximum and minimum depths (unscaled and unshifted) for backprojection
+        max_d = torch.ones((N, 1, 1, 1)).to(device) * self.cfg.get("max_d", 50.0)
+        min_d = torch.ones((N, 1, 1, 1)).to(device) * self.cfg.get("min_d", 0.0)
 
+        # Adjust the maximum minimum depth thresholds for current scale
+        if (depth_scales is not None) and (depth_shifts is not None):
+            max_d = depth_scales * max_d + depth_shifts
+            min_d = depth_scales * min_d + depth_shifts
+
+        # Depths are already scaled/shifted
         masks = masks & (depths < max_d) & (depths > min_d)
 
         # Random dropout
@@ -82,14 +100,18 @@ class SemanticBackprojector(Backprojector):
     `Backprojector` that uses a semantic segmentation model to compute
     backprojection masks
     """
-    def __init__(self, cfg: Dict, intrinsics: Tuple, segmentation_model: SegmentationModel):
+    def __init__(self, cfg: Dict, intrinsics: Tuple, segmentation_model: BaseModel, classes_to_segment: List[str] = ["car"]):
         self.cfg = cfg
         self.intrinsics = intrinsics
         self.segmentation_model = segmentation_model
-        self.classes_to_segment = None # TODO implement
+        self.classes_to_segment = classes_to_segment
 
-    def compute_backprojection_masks(self, images: torch.Tensor, depths: torch.Tensor) -> torch.Tensor:
-        geometric_masks = super().compute_backprojection_masks(images, depths)
+    def compute_backprojection_masks(self, images: torch.Tensor, depths: torch.Tensor, depth_scales: torch.Tensor = None, depth_shifts: torch.Tensor = None ) -> torch.Tensor:
+        geometric_masks = super().compute_backprojection_masks(images, depths, depth_scales, depth_shifts)
+        seg_preds = self.segmentation_model.predict({"images": images, "classes_to_segment": self.classes_to_segment})
+        masks_dict = seg_preds["masks_dict"]
+        semantic_masks = combine_segmentation_masks(masks_dict)
+        semantic_masks = torch.logical_not(semantic_masks) # we want moveables to be False
+        masks = geometric_masks | semantic_masks
 
-        semantic_masks = self.segmentation_model({"images": images, "classes_to_segment": self.classes_to_segment})
-        # TODO implement
+        return masks

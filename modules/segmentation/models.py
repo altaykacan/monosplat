@@ -39,7 +39,7 @@ class InstanceSegmentationModel(BaseModel):
             raise ValueError("Expected 'classes_to_detect' to be a list, check your input to the model!")
 
     def _check_output(self, output_dict: Dict):
-        if "instance_masks" not in output_dict.keys():
+        if "masks" not in output_dict.keys():
             raise ValueError("Couldn't find the key 'instance_masks' in your output_dict, check your prediction function!")
         if "boxes" not in output_dict.keys():
             raise ValueError("Couldn't find the key 'boxes' in your output_dict, check your prediction function!")
@@ -92,7 +92,6 @@ class MaskRCNN(InstanceSegmentationModel):
         self._detection_threshold = cfg.get("torchseg_det_threshold", 0.8)
         self._prob_threshold = cfg.get("torchseg_prob_threshold", 0.2)
 
-
     def load(self):
         if self._model is None and self._weights is None:
             if self._weights_config == "DEFAULT":
@@ -126,15 +125,12 @@ class MaskRCNN(InstanceSegmentationModel):
         images = input_dict["images"]
         images = images.to(self._device)
         classes_to_detect = input_dict["classes_to_detect"]
-
         categories = self._weights.meta["categories"]
-
         predictions = self._model(images)
 
         labels = []
         boxes = []
         masks = []
-
         for pred in predictions:
             pred_labels = []
             pred_boxes = []
@@ -145,7 +141,6 @@ class MaskRCNN(InstanceSegmentationModel):
                     pred_labels.append(categories[curr_label])
                     pred_boxes.append(pred["boxes"][i])
                     pred_masks.append((pred["masks"][i] > self._prob_threshold).unsqueeze(0))
-
 
             labels.append(pred_labels)
             boxes.append(pred_boxes)
@@ -185,7 +180,6 @@ class SegFormer(SegmentationModel):
         self._model = None
         self._device = cfg.get("device", "cuda" if torch.cuda.is_available() else "cpu")
 
-
     def load(self):
         if self._model is None:
             self._model = init_model(self._config, self._checkpoint, self._device)
@@ -195,14 +189,12 @@ class SegFormer(SegmentationModel):
 
             self._model.eval()
 
-
     def unload(self):
         self._model = None
         torch.cuda.empty_cache()
 
     def _preprocess(self, input_dict: Dict) -> Dict:
         return input_dict
-
 
     def _predict(self, input_dict: Dict) -> Dict:
         images = input_dict["images"]
@@ -223,7 +215,6 @@ class SegFormer(SegmentationModel):
         masks_dict = {}
         for id, name in zip(class_ids, classes_to_segment):
             masks_dict[name] = (preds == id)
-
 
         return {"masks_dict": masks_dict}
 

@@ -23,7 +23,7 @@ class PointCloud(BaseMap):
         self.xyz = None
         self.rgb = None
         self.normals = None
-        self.scale = 1.0
+        self.scale = scale
 
     @property
     def num_points(self):
@@ -74,7 +74,6 @@ class PointCloud(BaseMap):
 
         # Remove masked points, i.e. boolean columns that sum up to 0 (all zeros)
         valid_points_mask = (self.xyz.bool().sum(dim=0) != 0)
-
         self.xyz = self.xyz[:, valid_points_mask]
         self.rgb = self.rgb[:, valid_points_mask] if self.rgb is not None else None
         self.normals = self.normals[:, valid_points_mask] if self.normals is not None else None
@@ -100,7 +99,6 @@ class PointCloud(BaseMap):
             if self.rgb.dtype == torch.uint8:
                 self.rgb = self.rgb.float()
                 self.rgb = self.rgb / 255
-
             pcd.point.colors = self.rgb.permute(1, 0).cpu().numpy()
 
         if self.has_normals:

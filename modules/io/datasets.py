@@ -11,9 +11,9 @@ from scipy.spatial.transform import Rotation
 import torchvision.transforms.functional as tv_F
 
 from configs.data import KITTI360_DIR, PADDED_IMG_NAME_LENGTH
-from modules.eval.kitti360 import projectVeloToImage
-from modules.core.utils import compute_target_intrinsics
+from modules.core.utils import compute_target_intrinsics, resize_image_torch
 from modules.core.interfaces import BaseDataset
+from modules.eval.kitti360 import projectVeloToImage
 
 log = logging.getLogger(__name__)
 
@@ -34,9 +34,12 @@ class CustomDataset(BaseDataset):
             gt_depth_dir: Union[Path, str] = None,
             depth_dir: Union[Path, str] = None,
             scales_and_shifts_path: Union[Path, str] = None,
+            depth_scale: float = None,
             start: int = 0,
             end: int = -1,
-            device: str = None
+            device: str = None,
+            gt_pose_path: Union[Path, str]= None,
+            gt_pose_type: str = "kitti360",
             ) -> None:
         self.image_dir = image_dir if isinstance(image_dir, Path) else Path(image_dir)
         self.pose_path = pose_path if isinstance(pose_path, Path) else Path(pose_path)
@@ -55,8 +58,25 @@ class CustomDataset(BaseDataset):
             self.depth_dir = depth_dir if isinstance(depth_dir, Path) else Path(depth_dir)
             self.has_depth = True
 
+        if gt_pose_path is None:
+            self.gt_pose_path = None
+            self.has_gt_pose = False
+        else:
+            self.gt_pose_path = gt_pose_path
+            self.gt_pose_type = gt_pose_type
+            self.has_gt_pose = True
+
         self.pose_scale = pose_scale
         self.scales_and_shifts_path = scales_and_shifts_path
+        self.depth_scale = depth_scale
+        if (depth_scale is not None) and (scales_and_shifts_path is not None):
+            raise ValueError(f"You provided both a depth scale ({depth_scale}) to your dataset and a 'scales_and_shifts_path' ({scales_and_shifts_path}). The reconstructor you use will multiply depths by this value twice. Make sure to only provide 'scales_and_shifts_path' or 'depth_scale' to your dataset to avoid scaling the depths twice.")
+        else:
+            if depth_scale is not None:
+                log.info(f"Using depth scale ({depth_scale})")
+            if scales_and_shifts_path is not None:
+                log.info(f"Reading depth scales and shifts from '{scales_and_shifts_path}')")
+
         if orig_size == ():
             first_path = next(self.image_dir.iterdir())
             first_image = tv_F.pil_to_tensor(Image.open(first_path)) # [C, H, W]
@@ -66,6 +86,8 @@ class CustomDataset(BaseDataset):
 
         self.orig_intrinsics = orig_intrinsics
         self.size = target_size if target_size != () else self.orig_size
+        self.H = self.size[0]
+        self.W = self.size[1]
         self.intrinsics = ()
         self.crop_box = ()
 
@@ -73,8 +95,8 @@ class CustomDataset(BaseDataset):
         self.image_paths = []
         self.gt_depth_paths = [] # for ground truth depth
         self.depth_paths = [] # for precomputed depth
-        self.scales = [] # for precomputed depth
-        self.shifts = [] # for precomputed depth
+        self.scales = {} # for multiplying depth predictions, frame ids are the keys
+        self.shifts = {} # for adding to depth, frame ids are the keys
         self.poses = []
 
         self.start = start
@@ -131,10 +153,33 @@ class CustomDataset(BaseDataset):
 
             self.depth_paths.append(depth_path)
 
-        # TODO implement
+            # Set the scale and shift (which is zero by default)
+            if self.depth_scale is not None:
+                if self.pose_scale != 1.0:
+                    log.warning(f"You are currently both scaling the poses ({self.pose_scale}) and scaling the depths ({self.depth_scale}). Make sure this is what you intended! Usually you want to scale either the poses to match the depth scale or scale the depths to match the pose scale.")
+
+                self.scales[frame_id] = self.depth_scale
+                self.shifts[frame_id] = 0
+
         # Read in the scale and shift values if the path is given
         if self.scales_and_shifts_path is not None:
-            pass
+            if self.pose_scale != 1.0:
+                log.warning(f"You are currently both scaling the poses ({self.pose_scale}) and scaling the depths (from {self.scales_and_shifts_path}). Make sure this is what you intended! Usually you want to scale either the poses to match the depth scale or scale the depths to match the pose scale.")
+
+            with open(self.scales_and_shifts_path, "r") as file:
+                lines = file.readlines()
+
+            for line in lines:
+                line = line.strip()
+                if line[0] == "#":
+                    continue
+                cols = line.split(" ")
+                if len(cols) != 4:
+                    raise ValueError(f"Expected to find 4 columns in '{self.scales_and_shifts_path}'(precomputed_depth_path timestamp scale shift) but found {len(cols)} in line: '{line}'. Please check your file.")
+
+                frame_id = int(cols[1])
+                self.scales[frame_id] = float(cols[2])
+                self.shifts[frame_id] = float(cols[3])
 
         return None
 
@@ -260,39 +305,20 @@ class CustomDataset(BaseDataset):
         if self.orig_size == self.size:
             return image
 
-        # Need to convert (left, upper, right, lower) to the torchvision format
-        if crop_box != ():
-            # Coordinates of the left top corner of the crop box
-            left_top_corner_y = crop_box[1]
-            left_top_corner_x = crop_box[0]
-
-            box_height = crop_box[3] - crop_box[1]  # lower - upper
-            box_width = crop_box[2] - crop_box[0]  # right - left
-            image = tv_F.crop(
-                image, left_top_corner_y, left_top_corner_x, box_height, box_width
-            )
-
-        # Using interpolate to have finer control, also RAFT doesn't work well with antialiased preprocessing
-        resized_image = torch.nn.functional.interpolate(
-            image.unsqueeze(0),
-            self.size,
-            mode="bilinear",
-            antialias=False,
-            align_corners=True,
-        ).squeeze(0)
+        resized_image = resize_image_torch(image, self.size, crop_box)
 
         return resized_image
 
     def truncate_paths_and_poses(self):
         start_idx_found = False
         end_idx_found = False
-        # self.start and self.end are frame indices but we need the index in the lists
+        # self.start and self.end are frame indices but we need the index in the lists (some frame ids might not be in the pose files)
         while not start_idx_found:
             try:
                 self.start_idx = self.frame_ids.index(self.start)
                 start_idx_found = True
             except ValueError:
-                log.warning(f"The specified dataset start frame {self.start} can't be found in frame_ids, looking for next possible frame id")
+                log.warning(f"The specified dataset start frame {self.start} can't be found in frame_ids, looking for next possible frame id {self.start + 1}")
                 self.start += 1
 
         while not end_idx_found:
@@ -300,7 +326,7 @@ class CustomDataset(BaseDataset):
                 self.end_idx = self.frame_ids.index(self.end) if self.end != -1 else -1
                 end_idx_found = True
             except ValueError:
-                log.warning(f"The specified dataset end frame {self.end} can't be found in frame_ids, looking for next possible frame id")
+                log.warning(f"The specified dataset end frame {self.end} can't be found in frame_ids, looking for next possible frame id {self.end - 1}")
                 self.end -= 1
 
         if self.end == -1:
@@ -312,10 +338,13 @@ class CustomDataset(BaseDataset):
             self.image_paths = self.image_paths[self.start_idx:self.end_idx]
             self.poses = self.poses[self.start_idx:self.end_idx]
 
-    def get_by_frame_ids(self, frame_ids: List[int]) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def get_by_frame_ids(self, frame_ids: Union[List[int], torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Returns a batch of `frame_id`, `image` and `scaled_pose` based on
-        the list frame ids as input.
+        the list frame ids as input. If there is an index error, the output
+        frame id list gets a `-1` which can then be used to clean the batch
+        with `clean_batch()`. Useful for getting a window of frames around
+        each target frame in a batched tensor of frames `[N, C, H, W]`.
         """
         out_frame_ids = []
         out_images = []
@@ -325,19 +354,47 @@ class CustomDataset(BaseDataset):
             try:
                 idx = self.frame_ids.index(target_frame_id)
             except ValueError:
-                log.warning(f"Couldn't find the frame id {target_frame_id} in 'CustomDataset.get_by_frame_ids()'. Stopping collecting batch.")
-                break
+                log.warning(f"Couldn't find the frame id {target_frame_id} in 'CustomDataset.get_by_frame_ids()'. Appending '-1' values..")
+                out_frame_ids.append(-1)
+
+                # Dummy values for RGB image and 4x4 transformation matrix
+                out_images.append(-1 * torch.ones(3, self.H, self.W).to(self.device))
+                out_scaled_poses.append(-1 * torch.ones(4,4).to(self.device))
+                continue
 
             frame_id, image, scaled_pose = self.__getitem__(idx)
             out_frame_ids.append(frame_id)
             out_images.append(image)
             out_scaled_poses.append(scaled_pose)
 
-        out_frame_ids = torch.stack(out_frame_ids, dim=0)
+        out_frame_ids = torch.tensor(out_frame_ids)
         out_images = torch.stack(out_images, dim=0)
         out_scaled_poses = torch.stack(out_scaled_poses, dim=0)
 
         return out_frame_ids, out_images, out_scaled_poses
+
+    def get_depth_scale_shift_by_frame_ids(self, frame_ids: Union[List[int], torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
+        "Returns unit scale and zero shift if no values are given in initalization"
+        depth_scales = []
+        depth_shifts = []
+        if self.scales != {} and self.shifts != {}:
+            if isinstance(frame_ids, torch.Tensor):
+                frame_ids = frame_ids.tolist()
+
+            # We get the frame_ids for each frame in the batch
+            for frame_id in frame_ids:
+                depth_scales.append(self.scales[frame_id])
+                depth_shifts.append(self.shifts[frame_id])
+
+            # Need to have on the same device and be broadcastable with [N, C, H, W] tensors
+            depth_scales = torch.tensor(depth_scales).to(self.device).view(-1, 1, 1, 1)
+            depth_shifts = torch.tensor(depth_shifts).to(self.device).view(-1, 1, 1, 1)
+            return depth_scales, depth_shifts
+        else:
+            N = len(frame_ids)
+            unit_scale = torch.ones(N).to(self.device).view(-1, 1, 1, 1)
+            zero_shift = torch.zeros(N).to(self.device).view(-1, 1, 1, 1)
+            return unit_scale, zero_shift
 
     def __len__(self) -> int:
         return len(self.poses)
@@ -360,10 +417,37 @@ class CustomDataset(BaseDataset):
 
 
 class KITTIDataset(CustomDataset):
-    def __init__(self, image_dir: Union[Path, str], pose_path: Union[Path, str], pose_scale: float, orig_intrinsics: Tuple, orig_size: Tuple, target_size: Tuple, start: int = 0, end: int = -1):
+    def __init__(
+            self,
+            image_dir: Union[Path, str],
+            pose_path: Union[Path, str],
+            pose_scale: float,
+            orig_intrinsics: Tuple,
+            orig_size: Tuple,
+            target_size: Tuple,
+            gt_depth_dir: Union[Path, str] = None,
+            depth_dir: Union[Path, str] = None,
+            scales_and_shifts_path: Union[Path, str] = None,
+            depth_scale: float = None,
+            start: int = 0,
+            end: int = -1
+            ):
         # KITTI data has poses for every frame and no frame id in poses.txt, so we need to count it
         self.frame_counter = 0
-        super().__init__(image_dir, pose_path, pose_scale, orig_intrinsics, orig_size, target_size, start, end)
+        super().__init__(
+            image_dir,
+            pose_path,
+            pose_scale,
+            orig_intrinsics,
+            orig_size,
+            target_size,
+            gt_depth_dir,
+            depth_dir,
+            scales_and_shifts_path,
+            depth_scale,
+            start,
+            end,
+            )
 
     def parse_image_path_and_frame_id(self, cols: List[str]) -> Tuple[Path, int]:
         frame_id = self.frame_counter
@@ -400,7 +484,15 @@ class KITTI360Dataset(CustomDataset):
     ground truth depth, make sure you extract the velodyne data properly and
     use a `CustomDataset` instance with the correct `gt_depth_dir` attribute.
     """
-    def __init__(self, seq: int, cam_id: int, target_size: Tuple = (), pose_scale: float = 1.0, start: int = 0, end: int = -1):
+    def __init__(
+            self,
+            seq: int,
+            cam_id: int,
+            target_size: Tuple = (),
+            pose_scale: float = 1.0,
+            start: int = 0,
+            end: int = -1
+            ) -> None:
         # KITTI360 specific preparation before calling the constructor of the super class
         self.seq = seq
         self.cam_id = cam_id
@@ -430,8 +522,17 @@ class KITTI360Dataset(CustomDataset):
             projectVeloToImage(cam_id, seq, KITTI360_DIR, max_d=200, image_name_padding=PADDED_IMG_NAME_LENGTH)
 
         # Call to constructor of CustomDataset, sets most attributes
-        super().__init__(image_dir, pose_path, pose_scale, orig_intrinsics, orig_size, target_size, gt_depth_dir, start, end)
-
+        super().__init__(
+            image_dir,
+            pose_path,
+            pose_scale,
+            orig_intrinsics,
+            orig_size,
+            target_size,
+            gt_depth_dir,
+            start,
+            end
+            )
 
     @classmethod
     def parse_pose(cls, cols: List[str]) -> torch.Tensor:
@@ -452,6 +553,7 @@ class KITTI360Dataset(CustomDataset):
 
         return pose
 
+
 class TUMRGBDDataset(CustomDataset):
     @classmethod
     def parse_frame_id(cls, cols: List[str]) -> float:
@@ -465,7 +567,20 @@ class TUMRGBDDataset(CustomDataset):
 
 
 class COLMAPDataset(CustomDataset):
-    def __init__(self, colmap_dir: Union[Path, str], pose_scale: float, orig_intrinsics: Tuple, orig_size: Tuple = (), target_size: Tuple = (), gt_depth_dir: Union[Path, str] = None, depth_dir: Union[Path, str] = None, start: int = 0, end: int = -1):
+    def __init__(
+            self,
+            colmap_dir: Union[Path, str],
+            pose_scale: float,
+            orig_intrinsics: Tuple,
+            orig_size: Tuple = (),
+            target_size: Tuple = (),
+            gt_depth_dir: Union[Path, str] = None,
+            depth_dir: Union[Path, str] = None,
+            scales_and_shifts_path: Union[Path, str] = None,
+            depth_scale: float = None,
+            start: int = 0,
+            end: int = -1
+            ) -> None:
         image_dir = Path(colmap_dir) / Path("../../data/rgb")
         data_dir = Path(colmap_dir) / Path("sparse/0")
         pose_txt = data_dir / Path("images.txt")
@@ -479,7 +594,20 @@ class COLMAPDataset(CustomDataset):
             raise FileNotFoundError(f"Can't find the points3D files in {str(points_txt)}. If you only have .bin files, please run 'colmap model_converter --input_path 0 --output_path 0 --output_type TXT' in the right directory to convert binary files to txt files.")
 
         self.load_colmap_map(points_txt) # populates self.pcd
-        super().__init__(image_dir, pose_txt, pose_scale, orig_intrinsics, orig_size, target_size, gt_depth_dir, depth_dir, start=start, end=end)
+        super().__init__(
+            image_dir,
+            pose_txt,
+            pose_scale,
+            orig_intrinsics,
+            orig_size,
+            target_size,
+            gt_depth_dir,
+            depth_dir,
+            scales_and_shifts_path=scales_and_shifts_path,
+            depth_scale=depth_scale,
+            start=start,
+            end=end
+            )
 
     def load_colmap_map(self, points_txt: Path):
         """

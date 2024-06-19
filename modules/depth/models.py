@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 
 from modules.io.datasets import CustomDataset, KITTI360Dataset
-from modules.core.interfaces import BaseModel
+from modules.core.interfaces import BaseModel, BaseDataset
 
 log = logging.getLogger(__name__)
 
@@ -33,12 +33,13 @@ class Metric3Dv2(DepthModel):
     Metric3Dv2 model for monocular metric depth prediction.
 
     Expected inputs and outputs for `Metric3Dv2.predict()`:
-    `input_dict`: `{"images": batched image tensors with shape [N, C, H, W]}`
+    `input_dict`: `{"images": batched image tensors with shape [N, C, H, W], "frame_ids": List[int]}`
     `output_dict`: `{"depths": batched depth predictions with shape [N, C, H, W]}`
     """
-    def __init__(self, intrinsics: Tuple, depth_pred_size: Tuple = (), backbone="convnext", device: str = None):
+    def __init__(self, intrinsics: Tuple, depth_pred_size: Tuple = (), backbone="convnext", device: str = None, dataset: BaseDataset = None):
         self._intrinsics = intrinsics
         self._transformed_intrinsics = None
+        self._dataset = dataset
 
         # ViT backbone needs bfloat16 support on GPU (CUDA compute capability >= 8.0)
         if not torch.cuda.is_bf16_supported() and "vit" in backbone:
@@ -137,6 +138,7 @@ class Metric3Dv2(DepthModel):
         images_origin = input_dict["images"]
         images = input_dict["preprocessed_images"]
         pad_info = input_dict["pad_info"]
+        frame_ids = input_dict["frame_ids"]
 
         N, _, H_origin, W_origin = images_origin.shape
 
@@ -163,12 +165,16 @@ class Metric3Dv2(DepthModel):
             pred_normal = model_output_dict['prediction_normal'][:, :3, :, :]
             normal_confidence = model_output_dict['prediction_normal'][:, 3, :, :] # see https://arxiv.org/abs/2109.09881 for details
 
-            # Unpad and resize to some size if needed
-            pred_normal = pred_normal.squeeze()
-            pred_normal = pred_normal[:, pad_info[0] : pred_normal.shape[1] - pad_info[1], pad_info[2] : pred_normal.shape[2] - pad_info[3]]
+            # Unpad and resize to original size
+            pred_normal = pred_normal[:, :, pad_info[0] : pred_normal.shape[2] - pad_info[1], pad_info[2] : pred_normal.shape[3] - pad_info[3]]
+            pred_normal = torch.nn.functional.interpolate(pred_normal, (H_origin, W_origin), mode="bilinear")
+
+            # Make sure normals have unit magnitude
+            norm = torch.linalg.norm(pred_normal, dim=1, keepdims=True)
+            pred_normal = pred_normal / norm
 
             # To visualize normals we need to convert values from [-1, 1] to [0, 255]
-            pred_normal_vis = pred_normal.permute(1, 2, 0)
+            pred_normal_vis = pred_normal.permute(0, 2, 3, 1) # now [N, H, W, C]
             pred_normal_vis = (pred_normal_vis + 1) / 2
             pred_normal_vis = (pred_normal_vis * 255).to(torch.uint8)
             output_dict["normals"] = pred_normal
@@ -228,7 +234,7 @@ class PrecomputedDepthModel(DepthModel):
     `input_dict`: `{"frame_ids":  List[int] frame ids of the images to 'predict' depths by loading in precomputed depths}`
     `output_dict`: `{"depths": Batched loaded in precomputed depth values [N, 1, H, W]}`
     """
-    def __init__(self, dataset: CustomDataset, device: str = None):
+    def __init__(self, dataset: CustomDataset, depth_scale: float = None, device: str = None):
         self._dataset = dataset
         if device is None:
             self._device ="cuda" if torch.cuda.is_available() else "cpu"
@@ -252,10 +258,6 @@ class PrecomputedDepthModel(DepthModel):
             idx = self._dataset.frame_ids.index(frame_id)
             depth_path = self._dataset.depth_paths[idx]
             depth = torch.from_numpy(np.load(depth_path)).float().unsqueeze(0) # [1, H , W]
-
-            # TODO apply the scale and shift factors to depth map, dataset should read the scales_and_shifts.txt
-            if self._dataset.scales != [] and self._dataset.shifts != []:
-                pass
 
             # Resize and crop the depth according to the target_size of dataset
             if self._dataset.size != self._dataset.orig_size:
