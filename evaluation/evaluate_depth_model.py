@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader
 
 from configs.data import KITTI360_DIR, EVAL_DECIMAL_POINTS
 from modules.io.datasets import KITTI360Dataset
-from modules.depth.models import Metric3Dv2, KITTI360DepthModel
+from modules.depth.models import Metric3Dv2, KITTI360DepthModel, PrecomputedDepthModel
 from modules.eval.metrics import (
     AverageDepthMetric,
     compute_absrel,

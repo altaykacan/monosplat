@@ -16,9 +16,8 @@ from tqdm import tqdm
 
 from modules.pose.alignment import umeyama_alignment
 from modules.pose.visualization import save_traj
-from modules.eval.utils import round_results, extract_translations_from_poses, get_pose_matches, save_rpe_plot
+from modules.eval.utils import round_results, get_pose_matches, save_rpe_plot
 from modules.eval.metrics import compute_ate, compute_rpe
-from modules.eval.tum_rgbd_tools.associate import associate
 from modules.eval.tum_rgbd_tools.evaluate_ate import align
 from modules.io.utils import find_all_files_in_dir, read_all_poses_and_stamps
 from configs.data import EVAL_DECIMAL_POINTS
@@ -52,7 +51,7 @@ def main(args):
         raise RuntimeError(f"No poses have been found, please check your pose_dir input: {pose_dir}")
 
     # Iterate over the multiple pose files
-    for i, pose_path in tqdm(enumerate(pose_paths)):
+    for i, pose_path in enumerate(tqdm(pose_paths)):
         logging.info(f"Processing pose file {pose_path.name}")
 
         # Get timestamps for which we have predicted poses
