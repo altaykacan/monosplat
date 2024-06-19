@@ -17,6 +17,8 @@ ipython_config.py
 # Framework specific
 checkpoints/*.pth
 evaluation/eval_results/*
+demo/pointcloud/gt_map.ply
+demo/pointcloud/pred_map.ply
 
 
 # Debug
