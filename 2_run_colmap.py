@@ -21,7 +21,6 @@ from argparse import ArgumentParser
 
 from modules.io.utils import ask_to_clear_dir
 
-# TODO test this and run it!
 def main(args) -> None:
     source_p = Path(args.source_path)
     image_path = source_p / Path("../../data/rgb")
@@ -33,123 +32,124 @@ def main(args) -> None:
         if not should_continue:
             return -1
 
-    # # Setup logging
-    # log_time = datetime.now().strftime('%Y-%m-%d:%H-%M-%S')
-    # log_path = source_p.absolute() / Path("log_colmap.txt")
-    # with open(log_path, 'w'): # to clear existing log files
-    #     pass
-    # logging.basicConfig(filename=log_path, level=logging.INFO, format='%(levelname)s - %(message)s')
-    # logging.info(f"Log file for '2_run_colmap.py', created at (year-month-day:hour-minute-second): {log_time}")
-    # logging.info(f"Arguments: \n{json.dumps(vars(args), indent=4)}")
-    # logging.info(f"Using the image path: {str(image_path.absolute())}")
+    # Setup logging
+    log_time = datetime.now().strftime('%Y-%m-%d:%H-%M-%S')
+    log_path = source_p.absolute() / Path("log_colmap.txt")
+    with open(log_path, 'w'): # to clear existing log files
+        pass
+    logging.basicConfig(filename=log_path, level=logging.INFO, format='%(levelname)s - %(message)s')
+    logging.getLogger().addHandler(logging.StreamHandler())
+    logging.info(f"Log file for '2_run_colmap.py', created at (year-month-day:hour-minute-second): {log_time}")
+    logging.info(f"Arguments: \n{json.dumps(vars(args), indent=4)}")
+    logging.info(f"Using the image path: {str(image_path.absolute())}")
 
     colmap_command = '"{}"'.format(args.colmap_executable) if len(args.colmap_executable) > 0 else "colmap"
     magick_command = '"{}"'.format(args.magick_executable) if len(args.magick_executable) > 0 else "magick"
     use_gpu = 1 if not args.no_gpu else 0
-    # if not args.skip_matching:
-    #     os.makedirs(args.source_path + "/distorted/sparse", exist_ok=True)
+    if not args.skip_matching:
+        os.makedirs(args.source_path + "/distorted/sparse", exist_ok=True)
 
-    #     ## Feature extraction, image path is changed to follow our directory structure - Altay
-    #     if args.init_intrinsics == []:
-    #         feat_extracton_cmd = colmap_command + " feature_extractor "\
-    #             "--database_path " + args.source_path + "/distorted/database.db \
-    #             --image_path " + str(image_path.absolute()) + " \
-    #             --ImageReader.single_camera 1 \
-    #             --ImageReader.camera_model " + args.camera + " \
-    #             --SiftExtraction.use_gpu " + str(use_gpu)
-    #     else:
-    #         f, cx, cy = args.init_intrinsics
-    #         logging.info(f"Using initial guesses for the camera intrinsics (f, cx, cy): ({f}, {cx}, {cy})")
-    #         feat_extracton_cmd = colmap_command + " feature_extractor "\
-    #             "--database_path " + args.source_path + "/distorted/database.db \
-    #             --image_path " + str(image_path.absolute()) + " \
-    #             --ImageReader.single_camera 1 \
-    #             --ImageReader.camera_model " + args.camera + " \
-    #             --ImageReader.camera_params " + f"'{f}, {cx}, {cy}'" + " \
-    #             --SiftExtraction.use_gpu " + str(use_gpu)
+        ## Feature extraction, image path is changed to follow our directory structure - Altay
+        if args.init_intrinsics == []:
+            feat_extracton_cmd = colmap_command + " feature_extractor "\
+                "--database_path " + args.source_path + "/distorted/database.db \
+                --image_path " + str(image_path.absolute()) + " \
+                --ImageReader.single_camera 1 \
+                --ImageReader.camera_model " + args.camera + " \
+                --SiftExtraction.use_gpu " + str(use_gpu)
+        else:
+            f, cx, cy = args.init_intrinsics
+            logging.info(f"Using initial guesses for the camera intrinsics (f, cx, cy): ({f}, {cx}, {cy})")
+            feat_extracton_cmd = colmap_command + " feature_extractor "\
+                "--database_path " + args.source_path + "/distorted/database.db \
+                --image_path " + str(image_path.absolute()) + " \
+                --ImageReader.single_camera 1 \
+                --ImageReader.camera_model " + args.camera + " \
+                --ImageReader.camera_params " + f"'{f}, {cx}, {cy}'" + " \
+                --SiftExtraction.use_gpu " + str(use_gpu)
 
-    #     exit_code = os.system(feat_extracton_cmd)
-    #     if exit_code != 0:
-    #         logging.error(f"Feature extraction failed with code {exit_code}. Exiting.")
-    #         exit(exit_code)
+        exit_code = os.system(feat_extracton_cmd)
+        if exit_code != 0:
+            logging.error(f"Feature extraction failed with code {exit_code}. Exiting.")
+            exit(exit_code)
 
-    #     ## Feature matching
-    #     feat_matching_cmd = colmap_command + " exhaustive_matcher \
-    #         --database_path " + args.source_path + "/distorted/database.db \
-    #         --SiftMatching.use_gpu " + str(use_gpu)
-    #     exit_code = os.system(feat_matching_cmd)
-    #     if exit_code != 0:
-    #         logging.error(f"Feature matching failed with code {exit_code}. Exiting.")
-    #         exit(exit_code)
+        ## Feature matching
+        feat_matching_cmd = colmap_command + " exhaustive_matcher \
+            --database_path " + args.source_path + "/distorted/database.db \
+            --SiftMatching.use_gpu " + str(use_gpu)
+        exit_code = os.system(feat_matching_cmd)
+        if exit_code != 0:
+            logging.error(f"Feature matching failed with code {exit_code}. Exiting.")
+            exit(exit_code)
 
-    #     ### Bundle adjustment
-    #     # The default Mapper tolerance is unnecessarily large,
-    #     # decreasing it speeds up bundle adjustment steps.
-    #     mapper_cmd = (colmap_command + " mapper \
-    #         --database_path " + args.source_path + "/distorted/database.db \
-    #         --image_path "  + str(image_path.absolute()) + " \
-    #         --output_path "  + args.source_path + "/distorted/sparse \
-    #         --Mapper.ba_global_function_tolerance=0.000001")
-    #     exit_code = os.system(mapper_cmd)
-    #     if exit_code != 0:
-    #         logging.error(f"Mapper failed with code {exit_code}. Exiting.")
-    #         exit(exit_code)
+        ### Bundle adjustment
+        # The default Mapper tolerance is unnecessarily large,
+        # decreasing it speeds up bundle adjustment steps.
+        mapper_cmd = (colmap_command + " mapper \
+            --database_path " + args.source_path + "/distorted/database.db \
+            --image_path "  + str(image_path.absolute()) + " \
+            --output_path "  + args.source_path + "/distorted/sparse \
+            --Mapper.ba_global_function_tolerance=0.000001")
+        exit_code = os.system(mapper_cmd)
+        if exit_code != 0:
+            logging.error(f"Mapper failed with code {exit_code}. Exiting.")
+            exit(exit_code)
 
-    # ### Image undistortion
-    # ## We need to undistort our images into ideal pinhole intrinsics.
-    # img_undist_cmd = (colmap_command + " image_undistorter \
-    #     --image_path " + str(image_path.absolute()) + " \
-    #     --input_path " + args.source_path + "/distorted/sparse/0 \
-    #     --output_path " + args.source_path + "\
-    #     --output_type COLMAP")
-    # exit_code = os.system(img_undist_cmd)
-    # if exit_code != 0:
-    #     logging.error(f"Mapper failed with code {exit_code}. Exiting.")
-    #     exit(exit_code)
+    ### Image undistortion
+    ## We need to undistort our images into ideal pinhole intrinsics.
+    img_undist_cmd = (colmap_command + " image_undistorter \
+        --image_path " + str(image_path.absolute()) + " \
+        --input_path " + args.source_path + "/distorted/sparse/0 \
+        --output_path " + args.source_path + "\
+        --output_type COLMAP")
+    exit_code = os.system(img_undist_cmd)
+    if exit_code != 0:
+        logging.error(f"Mapper failed with code {exit_code}. Exiting.")
+        exit(exit_code)
 
-    # files = os.listdir(args.source_path + "/sparse")
-    # os.makedirs(args.source_path + "/sparse/0", exist_ok=True)
-    # # Copy each file from the source directory to the destination directory
-    # for file in files:
-    #     if file == '0':
-    #         continue
-    #     source_file = os.path.join(args.source_path, "sparse", file)
-    #     destination_file = os.path.join(args.source_path, "sparse", "0", file)
-    #     shutil.move(source_file, destination_file)
+    files = os.listdir(args.source_path + "/sparse")
+    os.makedirs(args.source_path + "/sparse/0", exist_ok=True)
+    # Copy each file from the source directory to the destination directory
+    for file in files:
+        if file == '0':
+            continue
+        source_file = os.path.join(args.source_path, "sparse", file)
+        destination_file = os.path.join(args.source_path, "sparse", "0", file)
+        shutil.move(source_file, destination_file)
 
-    # if(args.resize):
-    #     print("Copying and resizing...")
+    if(args.resize):
+        print("Copying and resizing...")
 
-    #     # Resize images.
-    #     os.makedirs(args.source_path + "/images_2", exist_ok=True)
-    #     os.makedirs(args.source_path + "/images_4", exist_ok=True)
-    #     os.makedirs(args.source_path + "/images_8", exist_ok=True)
-    #     # Get the list of files in the source directory
-    #     files = os.listdir(str(image_path.absolute()))
-    #     # Copy each file from the source directory to the destination directory
-    #     for file in files:
-    #         source_file = os.path.join(str(image_path.absolute()), file)
+        # Resize images.
+        os.makedirs(args.source_path + "/images_2", exist_ok=True)
+        os.makedirs(args.source_path + "/images_4", exist_ok=True)
+        os.makedirs(args.source_path + "/images_8", exist_ok=True)
+        # Get the list of files in the source directory
+        files = os.listdir(str(image_path.absolute()))
+        # Copy each file from the source directory to the destination directory
+        for file in files:
+            source_file = os.path.join(str(image_path.absolute()), file)
 
-    #         destination_file = os.path.join(args.source_path, "images_2", file)
-    #         shutil.copy2(source_file, destination_file)
-    #         exit_code = os.system(magick_command + " mogrify -resize 50% " + destination_file)
-    #         if exit_code != 0:
-    #             logging.error(f"50% resize failed with code {exit_code}. Exiting.")
-    #             exit(exit_code)
+            destination_file = os.path.join(args.source_path, "images_2", file)
+            shutil.copy2(source_file, destination_file)
+            exit_code = os.system(magick_command + " mogrify -resize 50% " + destination_file)
+            if exit_code != 0:
+                logging.error(f"50% resize failed with code {exit_code}. Exiting.")
+                exit(exit_code)
 
-    #         destination_file = os.path.join(args.source_path, "images_4", file)
-    #         shutil.copy2(source_file, destination_file)
-    #         exit_code = os.system(magick_command + " mogrify -resize 25% " + destination_file)
-    #         if exit_code != 0:
-    #             logging.error(f"25% resize failed with code {exit_code}. Exiting.")
-    #             exit(exit_code)
+            destination_file = os.path.join(args.source_path, "images_4", file)
+            shutil.copy2(source_file, destination_file)
+            exit_code = os.system(magick_command + " mogrify -resize 25% " + destination_file)
+            if exit_code != 0:
+                logging.error(f"25% resize failed with code {exit_code}. Exiting.")
+                exit(exit_code)
 
-    #         destination_file = os.path.join(args.source_path, "images_8", file)
-    #         shutil.copy2(source_file, destination_file)
-    #         exit_code = os.system(magick_command + " mogrify -resize 12.5% " + destination_file)
-    #         if exit_code != 0:
-    #             logging.error(f"12.5% resize failed with code {exit_code}. Exiting.")
-    #             exit(exit_code)
+            destination_file = os.path.join(args.source_path, "images_8", file)
+            shutil.copy2(source_file, destination_file)
+            exit_code = os.system(magick_command + " mogrify -resize 12.5% " + destination_file)
+            if exit_code != 0:
+                logging.error(f"12.5% resize failed with code {exit_code}. Exiting.")
+                exit(exit_code)
 
     converter_cmd = f"{colmap_command} model_converter --input_path {args.source_path}/sparse/0 --output_path {args.source_path}/sparse/0 --output_type TXT"
     exit_code = os.system(converter_cmd)

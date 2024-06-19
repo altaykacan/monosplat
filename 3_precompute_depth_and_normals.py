@@ -23,12 +23,13 @@ from modules.segmentation.utils import combine_segmentation_masks
 def main(args):
     root_dir = Path(args.root_dir)
     model_name = args.model.lower()
-    intrinsics = tuple(args.intrinsics)
+    intrinsics = tuple(args.intrinsics) if args.intrinsics is not None else ()
     skip_depth_png = args.skip_depth_png
     skip_mask_depth_png = args.skip_mask_depth_png
     skip_normals = args.skip_normals
     max_depth_png = args.max_depth_png
     scale_factor_depth_png = args.scale_factor_depth_png
+    debug = args.debug
 
     data_dir = root_dir / Path("data")
     image_dir = data_dir / Path("rgb")
@@ -39,6 +40,7 @@ def main(args):
     with open(log_path, 'w'): # to clear existing log files
         pass
     logging.basicConfig(filename=log_path, level=logging.INFO, format='%(levelname)s - %(message)s')
+    logging.getLogger().addHandler(logging.StreamHandler())
     logging.info(f"Log file for '3_precompute_depth_and_normals.py', created at (year-month-day:hour-minute-second): {log_time}")
     logging.info(f"Arguments: \n{json.dumps(vars(args), indent=4)}")
 
@@ -46,7 +48,7 @@ def main(args):
         raise ValueError(f"The maximum depth threshold ({max_depth_png}) and the scale factor ({scale_factor_depth_png}) you chose for saving the depths as png images exceeds the largest unsigned integer that can be represented by 16-bits, please lower the scale or the maximum depth!")
 
     if intrinsics == ():
-        raise ValueError(f"Your intrinsics are empty, please specify them as a list: '[fx, fy, cx, cy]'.")
+        raise ValueError(f"Your intrinsics are empty, please specify them as a list: '--intrinsics fx fy cx cy' in the command line.")
 
     # TODO can implement this with a model factory when we add more models
     # TODO separate the depth and normal model, currently we use metric3Dv2 to get both
@@ -61,10 +63,16 @@ def main(args):
         seg_classes = ["car", "bus", "person", "truck", "bicycle", "motorcycle", "rider"]
 
     # Paths to save the results
-    depth_array_dir = data_dir / Path("depths") / Path("arrays")
-    normal_array_dir = data_dir / Path("normals") / Path("arrays")
-    depth_png_dir = data_dir / Path("depths") / Path("images")
-    normal_png_dir = data_dir / Path("normals") / Path("images")
+    if debug:
+        depth_array_dir = data_dir / Path("depths_debug") / Path("arrays")
+        normal_array_dir = data_dir / Path("normals_debug") / Path("arrays")
+        depth_png_dir = data_dir / Path("depths_debug") / Path("images")
+        normal_png_dir = data_dir / Path("normals_debug") / Path("images")
+    else:
+        depth_array_dir = data_dir / Path("depths") / Path("arrays")
+        normal_array_dir = data_dir / Path("normals") / Path("arrays")
+        depth_png_dir = data_dir / Path("depths") / Path("images")
+        normal_png_dir = data_dir / Path("normals") / Path("images")
 
     depth_array_dir.mkdir(parents=True, exist_ok=True)
     normal_array_dir.mkdir(parents=True, exist_ok=True)
@@ -85,12 +93,13 @@ def main(args):
         logging.warning(f"Normal png directory '{str(normal_png_dir)}' is not empty and you chose not to continue. Aborting.")
         return -1
 
+    params = [cv2.IMWRITE_PNG_COMPRESSION, 0]  # lossless compression for png
     logging.info(f"Iterating through every path in {str(image_dir)} and predicting depths/normals for each image. This might take a while...")
     for image_path in tqdm(image_dir.iterdir()):
         if image_path.is_file() and image_path.suffix == ".png":
             frame_id = image_path.stem # no extension, has padded zeros
             image = pil_to_tensor(Image.open(image_path))
-            pred = model.predict({"images": image[None, :, : ,:]}) # dummy batch dimension
+            pred = model.predict({"images": image[None, :, : ,:], "frame_ids": torch.tensor([float(frame_id)])}) # dummy batch dimension
             depth = pred["depths"].squeeze(0) # [1, H, W]
             depth = depth.squeeze().detach().cpu().float().numpy() # cast to float to save disk memory
 
@@ -125,31 +134,31 @@ def main(args):
                     depth[masks] = (2**16 - 1)
 
                 # Save the depth png image as 16-bit unsigned integer monochrome png
-                params = [cv2.IMWRITE_PNG_COMPRESSION, 0]  # lossless compression for png
                 cv2.imwrite(str(depth_png_path), depth, params)
 
             # Save normal arrays and png images if specified
             if not skip_normals:
                 if "normals" not in pred.keys():
                     raise RuntimeError("You specified '--save_normals' but no normal predictions are found. Please check that your GPU supports ViT models if you are using Metric3Dv2 to get normal predictions.")
-                normals = pred["normals"].detach().cpu().numpy()
-                normals_vis = pred["normals_vis"].detach().cpu().numpy()
+                normals = pred["normals"].squeeze().detach().cpu().numpy()
+                normals_vis = pred["normals_vis"].squeeze().detach().cpu().numpy()
 
                 np.save(normal_array_path, normals)
-                cv2.imwrite(str(normal_png_path), normals_vis)
+                cv2.imwrite(str(normal_png_path), normals_vis, params)
     logging.info("Done!")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Predict and save depth and normal predictions as numpy arrays with the original sizes of the images. Optionally saves depth predictions as scaled 16-bit monochrome png images as well.")
-    parser.add_argument("--root_dir", type=str, help="The root of your data directory.")
-    parser.add_argument("--model", type=str, help="The model to get depth and normal predictions. Currently only metric3Dv2 is implemented which gives both depth and normal predictions.")
-    parser.add_argument("--intrinsics", type=float, nargs=4, help="Camera intrinsics as [fx, fy, cx, cy]. Run '2_run_colmap.py' to get them. If you already have intrinsics, make sure to scale them with the same factor you are resizing your images (dividing image dimensions by 2 -> dividing intrinsic parameters by 2)")
-    parser.add_argument("--skip_depth_png", action="store_false", type=bool, help="Flag to skip saving scaled depth images as 16-bit unsigned integer monochrome png images. These images are useful for RGB-D SLAM.")
-    parser.add_argument("--skip_mask_depth_png", action="store_false", type=bool, help="Flag to skip using moveable object masks to set the depths of moveable objects to a very high value when saving depth png images. This is useful to ignore potentially moving objects by setting a hard depth limit on the RGB-D SLAM system")
-    parser.add_argument("--skip_normals", action="store_false", type=bool, help="Flag to skip predicting normals. Use this if your 'model' does not have normal prediction capabilities.")
+    parser.add_argument("--root_dir", "-r", type=str, help="The root of your data directory.")
+    parser.add_argument("--model", "-m", type=str, help="The model to get depth and normal predictions. Currently only the input 'metric3d' is implemented which gives both depth and normal predictions.")
+    parser.add_argument("--intrinsics", type=float, nargs=4, help="Camera intrinsics as [fx, fy, cx, cy]. Run '2_run_colmap.py' to get them. If you already have intrinsics, make sure to scale them with the same factor you are resizing your images (dividing image dimensions by 2 -> dividing intrinsic parameters by 2). Provide inputs as '--intrinsics fx fy cx cy'")
+    parser.add_argument("--skip_depth_png", action="store_true", help="Flag to skip saving scaled depth images as 16-bit unsigned integer monochrome png images. These images are useful for RGB-D SLAM.")
+    parser.add_argument("--skip_mask_depth_png", action="store_true", help="Flag to skip using moveable object masks to set the depths of moveable objects to a very high value when saving depth png images. This is useful to ignore potentially moving objects by setting a hard depth limit on the RGB-D SLAM system")
+    parser.add_argument("--skip_normals", action="store_true", help="Flag to skip predicting normals. Use this if your 'model' does not have normal prediction capabilities.")
     parser.add_argument("--scale_factor_depth_png", type=float, default=1000.0, help="Scale factor to multiply depth predictions when saving as png images. This is useful because we would otherwise lose decimal points when converting to 16-bit unsigned integers. Scale factor times maximum depth need to be less than 2**16 - 1 == 65535")
     parser.add_argument("--max_depth_png", type=float, default=50.0, help="Maximum depth threshold for saving the depth png image. Any predicted depth larger than this value will be capped to it. Scale factor times maximum depth need to be less than 2**16 - 1 == 65535")
+    parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
 
     main(args)
