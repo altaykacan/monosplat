@@ -73,10 +73,25 @@ def main(args) -> None:
             logging.error(f"Feature extraction failed with code {exit_code}. Exiting.")
             exit(exit_code)
 
-        ## Feature matching
-        feat_matching_cmd = colmap_command + " exhaustive_matcher \
+        ## Feature matching either sequential (faster) or exhaustive matching (better performance)
+        if args.use_sequential_matcher:
+            feat_matching_cmd = colmap_command + " sequential_matcher \
             --database_path " + args.source_path + "/distorted/database.db \
             --SiftMatching.use_gpu " + str(use_gpu)
+
+            if args.vocab_tree_path is not None:
+                vocab_tree_path = Path(args.vocab_tree_path)
+                if not vocab_tree_path.exists():
+                    print(f"The vocabulary tree path you provided ({str(vocab_tree_path)}) does not exist. Please check that directory!")
+
+                feat_matching_cmd = feat_matching_cmd \
+                                + " --SequentialMatching.loop_detection 1" \
+                                + " --SequentialMatching.vocab_tree_path " + str(vocab_tree_path)
+        else:
+            feat_matching_cmd = colmap_command + " exhaustive_matcher \
+                --database_path " + args.source_path + "/distorted/database.db \
+                --SiftMatching.use_gpu " + str(use_gpu)
+
         exit_code = os.system(feat_matching_cmd)
         if exit_code != 0:
             logging.error(f"Feature matching failed with code {exit_code}. Exiting.")
@@ -163,13 +178,15 @@ if __name__=="__main__":
     parser = ArgumentParser("Colmap converter")
     parser.add_argument("--no_gpu", action='store_true')
     parser.add_argument("--skip_matching", action='store_true')
-    parser.add_argument("--source_path", "-s", required=True, type=str, help="The path to where your COLMAP dataset")
+    parser.add_argument("--source_path", "-s", required=True, type=str, help="The path to where your COLMAP dataset is")
     parser.add_argument("--camera", default="SIMPLE_PINHOLE", type=str, help="Camera model to use with COLMAP, suitable options are 'OPENCV', 'PINHOLE', and 'SIMPLE_PINHOLE'. Check COLMAP docs for more info.")
     parser.add_argument("--colmap_executable", default="", type=str)
     parser.add_argument("--resize", action="store_true")
     parser.add_argument("--magick_executable", default="", type=str)
     parser.add_argument("--init_intrinsics", default=[], nargs=3, type=float, help="Initial guess of the camera intrinsics as (f, cx, cy) if they exist. Assuming a simple pinhole camera model (fx and fy are the same)")
     parser.add_argument("--continue_last_run", action="store_true", help="Flag to specify whether the last COLMAP run should be continued. If it is not provided, you will be prompted to delete existing files or abort the script.")
+    parser.add_argument("--use_sequential_matcher", action="store_true", help="Flag to specify whether the sequential matcher instead of the exhaustive matcher is used for COLMAP. This is much faster for frames extracted from a video (single video) and has loop detection support. You need to provide '--vocab_tree_path' to use loop closure.")
+    parser.add_argument("--vocab_tree_path", type=str, default=None, help="The path to the used vocabulary tree. Only relevant if you provide '--use_sequential_matcher' flag.")
     args = parser.parse_args()
     main(args)
 
