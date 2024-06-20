@@ -154,6 +154,10 @@ class BaseDataset(ABC):
         pass
 
     @abstractmethod
+    def get_depth_path_from_frame_id(self, depth_dir: Path, frame_id: int) -> Path:
+        pass
+
+    @abstractmethod
     def load_gt_depth_paths(self) -> None:
         pass
 

@@ -15,7 +15,7 @@ from plyfile import PlyData
 from configs.data import SUPPORTED_DATASETS
 from modules.core.maps import PointCloud
 from modules.core.interfaces import BaseLogger, BaseReconstructor
-from modules.io.datasets import CustomDataset, KITTI360Dataset, KITTIDataset, TUMRGBDDataset, COLMAPDataset
+from modules.io.datasets import CustomDataset, KITTI360Dataset, KITTIDataset, TUMRGBDDataset, ColmapDataset
 
 log = logging.getLogger(__name__)
 
@@ -208,7 +208,7 @@ def get_parse_and_stamp_fn(dataset: str) -> Tuple[Callable, Callable]:
     elif dataset == "tum_rgbd":
         dataset_class = TUMRGBDDataset
     elif dataset  == "colmap":
-        dataset_class = COLMAPDataset
+        dataset_class = ColmapDataset
     elif dataset not in SUPPORTED_DATASETS:
         raise NotImplementedError(f"The dataset you specified ({dataset}) is not supported yet, supported datasets are: {str(SUPPORTED_DATASETS)}")
     else:

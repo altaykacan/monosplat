@@ -97,7 +97,7 @@ def main(args):
     logging.info(f"Iterating through every path in {str(image_dir)} and predicting depths/normals for each image. This might take a while...")
     for image_path in tqdm(image_dir.iterdir()):
         if image_path.is_file() and image_path.suffix == ".png":
-            frame_id = image_path.stem # no extension, has padded zeros
+            frame_id = image_path.stem # no extension, has padded zeros (and optional video id)
             image = pil_to_tensor(Image.open(image_path))
             pred = model.predict({"images": image[None, :, : ,:], "frame_ids": torch.tensor([float(frame_id)])}) # dummy batch dimension
             depth = pred["depths"].squeeze(0) # [1, H, W]

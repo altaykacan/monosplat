@@ -13,7 +13,7 @@ import open3d as o3d
 from modules.segmentation.models import SegFormer
 from modules.segmentation.utils import combine_segmentation_masks
 from modules.core.models import RAFT
-from modules.io.datasets import CustomDataset, COLMAPDataset
+from modules.io.datasets import CustomDataset, ColmapDataset, CombinedColmapDataset
 from modules.io.utils import read_all_poses_and_stamps, find_all_files_in_dir, create_scales_and_shifts_txt
 from modules.scale_alignment.sparse import do_sparse_alignment
 from modules.scale_alignment.dense import do_dense_alignment
@@ -61,7 +61,10 @@ def main(args):
     # TODO again, can use a dataset factory to clean up code
     # Read poses and precomputed depths
     if dataset_type == "colmap":
-        dataset = COLMAPDataset(colmap_dir, pose_scale=1, target_size=target_size, orig_intrinsics=intrinsics, depth_dir=depth_dir)
+        dataset = ColmapDataset(colmap_dir, pose_scale=1, target_size=target_size, orig_intrinsics=intrinsics, depth_dir=depth_dir)
+        pose_path = dataset.pose_path
+    if dataset_type == "combined_colmap":
+        dataset = CombinedColmapDataset(colmap_dir, pose_scale=1, target_size=target_size, orig_intrinsics=intrinsics, depth_dir=depth_dir)
         pose_path = dataset.pose_path
     elif dataset_type == "custom":
         dataset = CustomDataset(image_dir, pose_path, pose_scale=1, target_size=target_size, orig_intrinsics=intrinsics, depth_dir=depth_dir)

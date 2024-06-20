@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from tqdm import tqdm
 
 from modules.core.models import RAFT
-from modules.core.interfaces import BaseDataset, BaseModel
+from modules.core.interfaces import BaseDataset, BaseModel, CombinedColmapDataset
 from modules.core.visualization import visualize_flow
 from modules.core.utils import format_intrinsics, compute_occlusions
 from modules.depth.models import PrecomputedDepthModel
@@ -101,6 +101,15 @@ def do_dense_alignment(
             except IndexError:
                 log.warning(f"The end of the dataset is reached while doing dense scale alignment")
                 continue
+
+            # Deal with combined datasets where frame ids have the video id as the first digit
+            if isinstance(dataset, CombinedColmapDataset):
+                target_vid_id = str(target_id)[0] # first digit is video id
+                source_vid_id  = str(source_id)[0]
+
+                if target_vid_id != source_vid_id:
+                    log.info(f"Reached the end of the first sub-trajectories while doing dense scale alignment, moving on to the next video")
+                    continue
 
             target_pred = depth_model.predict({"frame_ids": [target_id]})
             source_pred = depth_model.predict({"frame_ids": [source_id]})

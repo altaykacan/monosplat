@@ -132,11 +132,14 @@ class CustomDataset(BaseDataset):
 
         return image_path, frame_id
 
+    def get_depth_path_from_frame_id(self, depth_dir: Path, frame_id: int) -> Path:
+        depth_path = Path(depth_dir, f"{frame_id:0{PADDED_IMG_NAME_LENGTH}}.npy")
+        return depth_path
+
     def load_gt_depth_paths(self) -> None:
         # frame_ids are already truncated, no need to do it again for depths
         for frame_id in self.frame_ids:
-            depth_path = Path(self.gt_depth_dir, f"{frame_id:0{PADDED_IMG_NAME_LENGTH}}.npy")
-
+            depth_path = self.get_depth_path_from_frame_id(self.gt_depth_dir, frame_id)
             if not depth_path.is_file():
                 raise FileNotFoundError(f"The ground truth depth value at '{depth_path}' can't be found. Please check your data at '{self.gt_depth_dir}' or trying running 'projectVeloToImage' at 'modules.eval.kitti360' again.")
 
@@ -147,13 +150,13 @@ class CustomDataset(BaseDataset):
     def load_depth_paths(self) -> None:
         # frame_ids are already truncated, no need to do it again for depths
         for frame_id in self.frame_ids:
-            depth_path = Path(self.depth_dir, f"{frame_id:0{PADDED_IMG_NAME_LENGTH}}.npy")
+            depth_path = self.get_depth_path_from_frame_id(self.depth_dir, frame_id)
             if not depth_path.is_file():
                 raise FileNotFoundError(f"The precomputed depth value at '{depth_path}' can't be found. Please check your data at '{self.depth_dir}' or trying running '3_precompute_depth_and_normals.py' again.")
 
             self.depth_paths.append(depth_path)
 
-            # Set the scale and shift (which is zero by default)
+            # Set the scale and shift (which is zero by default) if given
             if self.depth_scale is not None:
                 if self.pose_scale != 1.0:
                     log.warning(f"You are currently both scaling the poses ({self.pose_scale}) and scaling the depths ({self.depth_scale}). Make sure this is what you intended! Usually you want to scale either the poses to match the depth scale or scale the depths to match the pose scale.")
@@ -161,7 +164,7 @@ class CustomDataset(BaseDataset):
                 self.scales[frame_id] = self.depth_scale
                 self.shifts[frame_id] = 0
 
-        # Read in the scale and shift values if the path is given
+        # Read in the scale and shift values if the path to txt file is given
         if self.scales_and_shifts_path is not None:
             if self.pose_scale != 1.0:
                 log.warning(f"You are currently both scaling the poses ({self.pose_scale}) and scaling the depths (from {self.scales_and_shifts_path}). Make sure this is what you intended! Usually you want to scale either the poses to match the depth scale or scale the depths to match the pose scale.")
@@ -416,6 +419,8 @@ class CustomDataset(BaseDataset):
         return frame_id, image, scaled_pose
 
 
+
+
 class KITTIDataset(CustomDataset):
     def __init__(
             self,
@@ -566,7 +571,7 @@ class TUMRGBDDataset(CustomDataset):
         return frame_id
 
 
-class COLMAPDataset(CustomDataset):
+class ColmapDataset(CustomDataset):
     def __init__(
             self,
             colmap_dir: Union[Path, str],
@@ -736,18 +741,15 @@ class COLMAPDataset(CustomDataset):
                         skip_line = False
                         continue
                     else:
-                        skip_line = True # to skip the next line
+                        skip_line = True # to skip the next line in the next iteration
 
                     cols = line.split() # list of strings
-
                     image_path, frame_id = self.parse_image_path_and_frame_id(cols)
-
                     if not image_path.exists():
                         log.warning(f"Image {image_path} specified in pose file can't be found, skipping this frame")
                         continue
 
                     pose = self.parse_pose(cols)
-
                     if frame_id in self.frame_ids:
                         log.warning(f"Frame id {frame_id} has already been read. Skipping the associated images and poses.")
                     else:
@@ -768,3 +770,136 @@ class COLMAPDataset(CustomDataset):
                 raise RuntimeError(f"Different number of poses and images has been read, please check your pose file at '{self.pose_path}' and your images at '{self.image_dir}'")
 
             return None
+
+class CombinedColmapDataset(ColmapDataset):
+    """
+    Dataset class to use with datasets you get by combining multiple video
+    sequences. The difference is that each frame is saved as `video_id.padded_frame_id.png`,
+    e.g. `1.00023.png` is the 23rd frame from the first video. The amount of
+    padded zeros on the frame id depends on `PADDED_IMG_NAME_LENGTH` defined
+    in `./configs/data.py`. Frame ids are saved as integers after removing the
+    decimal point and the zeros (`1.00023` becomes `123`).
+
+    These combined sequences are usually used with COLMAP so the pose parsing
+    is identical.
+
+    # TODO add support for more than 9 videos (low prio)
+    WARNING: The code is written under the assumption that up to 9 videos
+    will be used to create a reconstruction (i.e. single digit video ids indexed
+    from 1 NOT 0).
+    """
+    def __init__(
+            self,
+            colmap_dir: Union[Path, str],
+            pose_scale: float,
+            orig_intrinsics: Tuple,
+            orig_size: Tuple = (),
+            target_size: Tuple = (),
+            gt_depth_dir: Union[Path, str] = None,
+            depth_dir: Union[Path, str] = None,
+            scales_and_shifts_path: Union[Path, str] = None,
+            depth_scale: float = None,
+            start: int = 1,
+            end: int = -1
+            ) -> None:
+        super().__init__(
+            colmap_dir,
+            pose_scale,
+            orig_intrinsics,
+            orig_size,
+            target_size,
+            gt_depth_dir,
+            depth_dir,
+            scales_and_shifts_path,
+            depth_scale,
+            start,
+            end
+        )
+
+        # Keys are video ids as strings, values are lists of integer frame ids
+        self.sub_frame_ids= {}
+        self.collect_separate_sub_frames()
+
+    @classmethod
+    def convert_filename_to_frame_id(cls, filename: str) -> int:
+        """
+        Parses the filename notation we use for combined video datasets into an
+        integer frame id. Example: `'1.00054.png'` becomes `154`.
+        """
+        name_split = filename.split(".")
+        vid_id = name_split[0]
+        vid_frame_id = name_split[1]
+
+        # Check to avoid initial digits being zero (otherwise 0.0012 will be the same as 1.0002)
+        if vid_id == "0":
+            raise ValueError("Your video id is 0, this is not allowed to avoid duplicate frame ids. Please number your videos starting from 1")
+
+        # Check to make sure we have less than 9 videos (single digit video ids)
+        if len(vid_id + vid_frame_id) > (PADDED_IMG_NAME_LENGTH + 1):
+            raise ValueError(f"The frame id you provided has {len(vid_id + vid_frame_id)} digits when considering the ids of the multiple videos you used. This violates the assumption of having single digit video ids. Please make sure you use less than 10 videos.")
+
+        vid_frame_id = str(int(vid_frame_id)) # removes the prepended zeros
+        frame_id = int(vid_id + vid_frame_id) # concatenates strings (digits) and converts to int
+        return frame_id
+
+    @classmethod
+    def convert_frame_id_to_filename(cls, frame_id: int) -> str:
+        """
+        Converts combined integer frame ids (video id concatenated with frame id)
+        into the right filename string *without* the extension.
+        """
+        frame_id = str(frame_id) # convert combined integer into string
+        vid_id = frame_id[0] # video id as string
+        vid_frame_id = frame_id[1:] # frame id within the video
+        vid_frame_id = vid_frame_id.zfill(PADDED_IMG_NAME_LENGTH) # pad with zeros
+        filename = vid_id + "." + vid_frame_id
+        return filename
+
+    def get_depth_path_from_frame_id(self, depth_dir: Path, frame_id: int) -> Path:
+        depth_path = Path(depth_dir, filename)
+        filename = self.convert_frame_id_to_filename(frame_id) + ".npy"
+        return depth_path
+
+    @classmethod
+    def parse_frame_id(cls, cols: List[str]) -> int:
+        """
+        Returns the frame id (the name of the image file) which is the last
+        column in COLMAP format. The first column is the COLMAP internal image id.
+
+        Expects the image names to be  `video_id.padded_frame_id.png`, for example
+        `1.00023.png` is the 23rd frame of the video with the id `1`.
+
+        Expects to receive the space-split rows of `images.txt` from COLMAP
+        describing the image poses, not the 2D points for each image (i.e.
+        expects every other line of `images.txt`).
+        """
+        filename = cols[-1]
+        frame_id = cls.convert_filename_to_frame_id(filename)
+
+        return frame_id
+
+    def parse_image_path_and_frame_id(self, cols: List[str]) -> Union[Path, int]:
+        frame_id = self.parse_frame_id(cols)
+        image_name = self.convert_frame_id_to_filename(frame_id) + ".png"
+        image_path = Path(self.image_dir, image_name)
+        return image_path, frame_id
+
+    def collect_separate_sub_frames(self) -> None:
+        """
+        Populates the `sub_frame_ids` attribute which is a dictionary that holds
+        the list of frame ids for every trajectory from the videos you used to
+        create the combined dataset
+        """
+        for frame_id in self.frame_ids:
+            frame_id_str = str(frame_id)
+            vid_id = int(frame_id_str[0]) # assuming 1 digit video ids
+
+            # Get current list and append current frame id
+            frame_ids_list = self.sub_frame_ids.get(vid_id, [])
+            frame_ids_list.append(frame_id)
+
+            # Update the value of the list
+            self.sub_frame_ids[vid_id] = frame_ids_list
+
+
+
