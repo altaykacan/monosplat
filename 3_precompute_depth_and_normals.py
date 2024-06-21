@@ -12,10 +12,10 @@ from PIL import Image
 from tqdm import tqdm
 from torchvision.transforms.functional import pil_to_tensor
 
-from configs.data import PADDED_IMG_NAME_LENGTH
 from modules.core.utils import grow_bool_mask
 from modules.io.utils import ask_to_clear_dir
 from modules.depth.models import Metric3Dv2
+from modules.core.models import Metric3Dv2NormalModel
 from modules.segmentation.models import SegFormer
 from modules.segmentation.utils import combine_segmentation_masks
 
@@ -51,12 +51,15 @@ def main(args):
         raise ValueError(f"Your intrinsics are empty, please specify them as a list: '--intrinsics fx fy cx cy' in the command line.")
 
     # TODO can implement this with a model factory when we add more models
-    # TODO separate the depth and normal model, currently we use metric3Dv2 to get both
     # Initialize pretrained models
-    if model_name == "metric3d":
-        model = Metric3Dv2(intrinsics, backbone="vit_giant")
+    if model_name == "metric3d_vit":
+        depth_model = Metric3Dv2(intrinsics, backbone="vit_giant")
     else:
-        raise ValueError(f"The provided model name '{model_name}' is not recognized. Please try 'metric3d'.")
+        raise ValueError(f"The provided model name '{model_name}' is not recognized. Please try 'metric3d-vit'.")
+
+    # TODO separate the depth and normal model properly, currently we use metric3Dv2 to get both
+    if not skip_normals:
+        normal_model = Metric3Dv2NormalModel(depth_model)
 
     if not skip_depth_png and not skip_mask_depth_png:
         seg_model = SegFormer()
@@ -99,7 +102,7 @@ def main(args):
         if image_path.is_file() and image_path.suffix == ".png":
             frame_id = image_path.stem # no extension, has padded zeros (and optional video id)
             image = pil_to_tensor(Image.open(image_path))
-            pred = model.predict({"images": image[None, :, : ,:], "frame_ids": torch.tensor([float(frame_id)])}) # dummy batch dimension
+            pred = depth_model.predict({"images": image[None, :, : ,:], "frame_ids": torch.tensor([float(frame_id)])}) # dummy batch dimension
             depth = pred["depths"].squeeze(0) # [1, H, W]
             depth = depth.squeeze().detach().cpu().float().numpy() # cast to float to save disk memory
 
@@ -138,9 +141,9 @@ def main(args):
 
             # Save normal arrays and png images if specified
             if not skip_normals:
-                if "normals" not in pred.keys():
-                    raise RuntimeError("You specified '--save_normals' but no normal predictions are found. Please check that your GPU supports ViT models if you are using Metric3Dv2 to get normal predictions.")
-                normals = pred["normals"].squeeze().detach().cpu().numpy()
+                # TODO actually get some normal models and don't do this hacky way
+                normal_pred = normal_model.predict({"metric3d_preds": pred})
+                normals = normal_pred["normals"].squeeze().detach().cpu().numpy()
                 normals_vis = pred["normals_vis"].squeeze().detach().cpu().numpy()
 
                 np.save(normal_array_path, normals)
@@ -151,7 +154,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Predict and save depth and normal predictions as numpy arrays with the original sizes of the images. Optionally saves depth predictions as scaled 16-bit monochrome png images as well.")
     parser.add_argument("--root_dir", "-r", type=str, help="The root of your data directory.")
-    parser.add_argument("--model", "-m", type=str, help="The model to get depth and normal predictions. Currently only the input 'metric3d' is implemented which gives both depth and normal predictions.")
+    parser.add_argument("--model", "-m", type=str, help="The model to get depth and normal predictions. Currently only 'metric3d_vit' is implemented which gives both depth and normal predictions.")
     parser.add_argument("--intrinsics", type=float, nargs=4, help="Camera intrinsics as [fx, fy, cx, cy]. Run '2_run_colmap.py' to get them. If you already have intrinsics, make sure to scale them with the same factor you are resizing your images (dividing image dimensions by 2 -> dividing intrinsic parameters by 2). Provide inputs as '--intrinsics fx fy cx cy'")
     parser.add_argument("--skip_depth_png", action="store_true", help="Flag to skip saving scaled depth images as 16-bit unsigned integer monochrome png images. These images are useful for RGB-D SLAM.")
     parser.add_argument("--skip_mask_depth_png", action="store_true", help="Flag to skip using moveable object masks to set the depths of moveable objects to a very high value when saving depth png images. This is useful to ignore potentially moving objects by setting a hard depth limit on the RGB-D SLAM system")
