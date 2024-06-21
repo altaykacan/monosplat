@@ -77,7 +77,12 @@ class MaskRCNN(InstanceSegmentationModel):
 
     Expected inputs and outputs for `predict()`:
     `intput_dict`: `{"images": torch.Tensor, "classes_to_detect": List[str]}`
-    `output_dict`: `{"boxes": List[torch.Tensor], "scores": List[torch.Tensor], "masks": List[torch.Tensor]}`
+    `output_dict`: `{"boxes": List[List[torch.Tensor]], "labels": List[List[str]], "masks": List[List[torch.Tensor]]}`
+
+    The `masks` entry is a list of lists of torch tensors. The first element of
+    the outer list has the list of all the `[1, 1, H, W]` instance masks predicted
+    for the first element of the batch. The length of the first list is the batch
+    size.
     """
     def __init__(self, cfg: Dict = {}):
         if not torchvision_found:
@@ -167,7 +172,6 @@ class SegFormer(SegmentationModel):
         if not mmseg_found:
             raise ImportError("Couldn't find mmseg. Please check you have mmseg properly installed (pay attention to supported PyTorch versions) before using this class.")
 
-        # TODO figure out if these paths work properly
         # These are intended to be called from a main function/script running in the base directory of the project
         default_checkpoint = "./checkpoints/segformer_mit-b5_8x1_1024x1024_160k_cityscapes_20211206_072934-87a052ec.pth"
         default_config =  "./configs/thirdparty/mmseg/segformer/segformer_mit-b5_8xb1-160k_cityscapes-1024x1024.py"

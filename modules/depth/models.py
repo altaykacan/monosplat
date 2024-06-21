@@ -44,6 +44,7 @@ class Metric3Dv2(DepthModel):
         # ViT backbone needs bfloat16 support on GPU (CUDA compute capability >= 8.0)
         if not torch.cuda.is_bf16_supported() and "vit" in backbone:
             log.warning(f"Your GPU does not support bfloat16 (needs CUDA compute capability >= 8.0), switching to ConvNeXt backbone for Metric3Dv2!")
+            log.warning("CAUTION: Since the backbone is being switched to convnext, if you computed your scale factors using depths from a different backbone, you might get WRONG reconstructions.")
             backbone = "convnext"
 
         # Suggestions from the authors for vit model: (616, 1064), for convnext model: (544, 1216)
@@ -234,7 +235,7 @@ class PrecomputedDepthModel(DepthModel):
     `input_dict`: `{"frame_ids":  List[int] frame ids of the images to 'predict' depths by loading in precomputed depths}`
     `output_dict`: `{"depths": Batched loaded in precomputed depth values [N, 1, H, W]}`
     """
-    def __init__(self, dataset: CustomDataset, depth_scale: float = None, device: str = None):
+    def __init__(self, dataset: CustomDataset, device: str = None):
         self._dataset = dataset
         if device is None:
             self._device ="cuda" if torch.cuda.is_available() else "cpu"

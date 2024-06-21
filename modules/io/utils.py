@@ -115,7 +115,6 @@ def ask_to_clear_dir(dir_path: Union[str, Path]) -> bool:
 
     not_empty = any(dir_path.iterdir())
     should_continue = True
-
     if not_empty:
         while True:
             answer = input(f"The directory you specified {str(dir_path)} is not empty, do you want to delete existing files before continuing? [yes/no]: ")
@@ -156,7 +155,7 @@ def find_latest_number_in_dir(dir_path: Union[str, Path]) -> int:
         dir_path = Path(dir_path)
 
     for path in dir_path.iterdir():
-        path_str = str(path)
+        path_str = str(path.name)
 
         # Don't count hidden files
         if path_str[0] == ".":
@@ -357,7 +356,7 @@ def create_depth_txt(path: Union[Path, str], image_dir: Union[Path, str]):
             out_file.write(f"{timestamp} {image_path.relative_to(path)}\n")
 
 
-# TODO implement
+# TODO implement, needed for RGB-D SLAM
 def create_associations_txt():
     pass
 
@@ -391,24 +390,14 @@ def create_scales_and_shifts_txt(
     if isinstance(shifts, float):
         shifts = torch.ones_like(torch.tensor(stamps)) * shifts
 
-    # Get matching depth paths
-    matching_depth_paths = []
-    depth_ids = [int(p.stem) for p in depth_paths]
-    for curr_stamp in stamps:
-        depth_idx = depth_ids.index(curr_stamp)
-        matching_depth_paths.append(depth_paths[depth_idx])
-
-    if len(matching_depth_paths) != len(scales) and len(matching_depth_paths) != len(stamps) and len(matching_depth_paths) != len(shifts):
-        raise RuntimeError("Please check your depth paths and your stamps. The number of computed scales and shifts do not match the number of your precomputed depths.")
-
-    # Write to file
+    # Write to file, depth paths and stamps are alrady matching
     log.info(f"Writing scales and shifts as a txt file at {str(file_path)}...")
     with open(file_path, "w") as file:
         file.write(f"# Scale factors and shifts to apply to each depth prediction for {pose_path.name}\n")
         file.write(f"# scale and shift values are floats, created at (year-month-day:hour-minute-second): {log_time}\n")
         file.write("# precomputed_depth_path timestamp scale shift\n")
         for i in range(len(stamps)):
-            file.write(f"{matching_depth_paths[i]} {stamps[i]} {scales[i].item()} {shifts[i].item()}\n")
+            file.write(f"{depth_paths[i]} {stamps[i]} {scales[i].item()} {shifts[i].item()}\n")
     log.info(f"Wrote scales_and_shifts.txt")
 
 

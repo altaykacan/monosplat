@@ -23,10 +23,11 @@ from modules.io.utils import ask_to_clear_dir
 
 def main(args) -> None:
     source_p = Path(args.source_path)
-    image_path = source_p / Path("../../data/rgb")
-    if not source_p.is_dir():
-        raise FileNotFoundError(f"Your source path '{args.source_path}' does not exist!")
+    image_path = source_p / Path("../../data/rgb") # according to assumed directory structure
+    if not image_path.is_dir():
+        raise FileNotFoundError(f"Can't find '{str(image_path.absolute())}'. Your source path '{args.source_path}' probably isn't in the right place or you need to extract frames from your video!")
 
+    source_p.mkdir(exist_ok=True, parents=True)
     if not args.continue_last_run:
         should_continue = ask_to_clear_dir(source_p)
         if not should_continue:

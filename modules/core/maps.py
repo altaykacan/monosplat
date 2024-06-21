@@ -93,7 +93,6 @@ class PointCloud(BaseMap):
         # Convert to open3d cloud, open3d expects [N, 3] numpy arrays
         pcd = o3d.t.geometry.PointCloud()
         pcd.point.positions = self.xyz.permute(1, 0).cpu().numpy()
-
         if self.has_rgb:
             # open3d wants normalized float rgb values
             if self.rgb.dtype == torch.uint8:
@@ -106,7 +105,7 @@ class PointCloud(BaseMap):
 
         self.pcd = pcd
 
-    def clean(self, num_neighbors: int = 20, std_deviation: float = 2.0, save_init_cloud: bool = False):
+    def clean(self, num_neighbors: int = 20, std_deviation: float = 2.0, remember_init_cloud: bool = False):
         """
         Cleans the open3D point cloud that is created after running `postprocess()`
         using statistical outlier removal. Optionally saves the point cloud before
@@ -115,7 +114,7 @@ class PointCloud(BaseMap):
         if self.pcd is None:
             raise RuntimeError("You need to first run 'PointCloud.postprocess()' before cleaning your map!")
 
-        if save_init_cloud:
+        if remember_init_cloud:
             self.prev_pcd = self.pcd # remember cloud before cleaning, useful for debugging
         self.pcd, _ = self.pcd.remove_statistical_outliers(num_neighbors, std_deviation)
 

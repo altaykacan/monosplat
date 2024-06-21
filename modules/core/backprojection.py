@@ -3,7 +3,6 @@ from typing import Dict, Tuple, List
 import torch
 
 from modules.core.interfaces import BaseBackprojector, BaseModel
-from modules.segmentation.models import SegmentationModel
 from modules.segmentation.utils import combine_segmentation_masks
 
 class Backprojector(BaseBackprojector):

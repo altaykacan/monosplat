@@ -117,3 +117,50 @@ class RAFT(OpticalFlowModel):
             flow = list_of_flows[-1]
 
         return {"flow": flow}
+
+
+# TODO could put these normal models in their own module
+class NormalModel(BaseModel):
+    """
+    Model parent class for surface normal prediction. Implement `__init__()`,
+    `_preprocess()`, `_predict()`, and `load()` and `unload()`
+
+    Expected inputs and outputs for `self.predict()`:
+    `input_dict`: `{}`
+    `output_dict`: `{}`
+    """
+    def _check_input(self, input_dict: Dict):
+        pass
+
+    def _check_output(self, output_dict: Dict):
+        pass
+
+class Metric3Dv2NormalModel(NormalModel):
+    """
+    Surface normal prediction model that uses the same underlying Metric3Dv2 model
+    to get normal predictions
+
+    Expected inputs and outputs for `self.predict()`:
+    `input_dict`: `{"metric3d_preds": Dict, output dictionary of a Metric3Dv2 model with a ViT backbone }`
+    `output_dict`: `{"normals": torch.Tensor [N, 3, H, W] tensors extracted from the Metric3Dv2 model, "normals_vis": torch.Tensor RGB images for visualizing the normals}`
+    """
+    def __init__(self, metric3d_model: BaseModel):
+        self.model = metric3d_model
+
+        if "vit" not in metric3d_model._backbone:
+            raise ValueError(f"To use normal predictions with Metric3D you need to use a ViT backbone! Current backbone is: {metric3d_model._backbone}")
+
+    def load(self):
+        pass
+
+    def unload(self):
+        pass
+
+    def _preprocess(self, input_dict: Dict) -> Dict:
+        return input_dict
+
+    def _predict(self, input_dict: Dict) -> Dict:
+        metric3d_preds = input_dict["metric3d_preds"]
+        normals = metric3d_preds["normals"]
+        normals_vis = metric3d_preds["normals_vis"]
+        return {"normals": normals, "normals_vis": normals_vis}

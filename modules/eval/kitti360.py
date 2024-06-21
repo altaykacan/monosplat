@@ -56,7 +56,7 @@ class Kitti360Viewer3DRaw(object):
         pcd = np.concatenate([np.zeros_like(pcd[:,0:1]), -pcd[:,0:1], pcd[:,1:2]], axis=1)
         return pcd
 
-def get_kitti360_frames_with_poses(cam_id: int = 0, seq = 0, kitti360path: str = 0, start: int = 0, end: int =-1) -> List[int]:
+def get_kitti360_frames_with_poses(cam_id: int = 0, seq = 0, kitti360path: str = 0, start: int = None, end: int =-1) -> List[int]:
     """
     Function to parse the `cam0_to_world.txt` files of the associated sequences
     from the KITTI360 dataset. Returns a list of frame_ids as integers.

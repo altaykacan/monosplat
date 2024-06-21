@@ -7,11 +7,12 @@ import torch.nn.functional as F
 from tqdm import tqdm
 
 from modules.core.models import RAFT
-from modules.core.interfaces import BaseDataset, BaseModel, CombinedColmapDataset
+from modules.core.interfaces import BaseDataset, BaseModel
 from modules.core.visualization import visualize_flow
 from modules.core.utils import format_intrinsics, compute_occlusions
 from modules.depth.models import PrecomputedDepthModel
 from modules.eval.utils import compute_mean_recursive
+from modules.io.datasets import CombinedColmapDataset
 from modules.io.utils import save_image_torch
 from modules.segmentation.models import SegFormer
 from modules.segmentation.utils import combine_segmentation_masks
@@ -30,9 +31,10 @@ def do_dense_alignment(
     min_flow: float = 0.2,
     mask_moveable_objects: bool = True,
     mask_occlusions: bool = True,
-    log_dir: Path = Path("."),
+    log_dir: Path = Path("./alignment_plots"),
     frame_idx_for_hist: int = 8,
     log_every: int = 50,
+    debug: bool = False
     ) -> Dict:
     """
     Does dense scale alignment for each pair of images for multiple flow steps.
@@ -76,7 +78,10 @@ def do_dense_alignment(
     scales = {}
     frame_scales_for_hist = {}
     scale_tensors_to_plot = {}
-    frame_ids_for_hist = [dataset.frame_ids[i] for i in [frame_idx_for_hist, 0, len(dataset) // 8, len(dataset) // 4, len(dataset) // 2, len(dataset) // 2 + 1, - (len(dataset) // 4), - (len(dataset) // 8)]]
+    if debug:
+        frame_ids_for_hist = [dataset.frame_ids[i] for i in [frame_idx_for_hist, 0, len(dataset) // 8, len(dataset) // 4]]
+    else:
+        frame_ids_for_hist = [dataset.frame_ids[i] for i in [frame_idx_for_hist, 0, len(dataset) // 8, len(dataset) // 4, len(dataset) // 2, len(dataset) // 2 + 1, - (len(dataset) // 4), - (len(dataset) // 8)]]
     flow_model = RAFT()
     depth_model = PrecomputedDepthModel(dataset)
     if mask_moveable_objects:
@@ -93,7 +98,7 @@ def do_dense_alignment(
         frame_scales_for_hist[flow_step] = {}
         scale_tensors_to_plot[flow_step] = {}
 
-        # TODO do this in a batched way with a DataLoader, we got the get_by_frame_ids function implemented, that should fix it!
+        # TODO do this in a batched manner to speed up a lot (low prio)
         log.info(f"Processing each image pair for flow step {flow_step}. This might take some time...")
         for i, (target_id, target_image, target_pose) in enumerate(tqdm(dataset)):
             try:
@@ -108,7 +113,7 @@ def do_dense_alignment(
                 source_vid_id  = str(source_id)[0]
 
                 if target_vid_id != source_vid_id:
-                    log.info(f"Reached the end of the first sub-trajectories while doing dense scale alignment, moving on to the next video")
+                    log.info(f"Reached the end of the current sub-trajectory while doing dense scale alignment, moving on to the next video")
                     continue
 
             target_pred = depth_model.predict({"frame_ids": [target_id]})
@@ -172,12 +177,17 @@ def do_dense_alignment(
                 frame_scales_for_hist[flow_step][target_id] = {"forward": curr_scale, "backward": curr_scale_rev}
                 scale_tensors_to_plot[flow_step][target_id] = {"forward": vis_tensor1, "backward": vis_tensor2}
 
+            if debug and target_id > dataset.frame_ids[len(dataset) // 4]:
+                log.warning(f"Debug mode is active, stopping dense alignment early at frame {target_id} for flow step {flow_step}")
+                break
+
     plot_dense_alignment_results(
         scales,
         frame_ids_for_hist,
         frame_scales_for_hist,
         scale_tensors_to_plot,
-        log_dir
+        log_dir,
+        dataset,
         )
 
     # Average over all flow steps, all frames, and both forward backward methods

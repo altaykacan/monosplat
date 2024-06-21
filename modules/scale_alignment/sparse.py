@@ -86,7 +86,7 @@ def do_sparse_alignment(
         ignore_masks: torch.Tensor = None,
         min_d: float = 0.0,
         max_d: float = 30.0,
-        log_dir: Path = Path("."),
+        log_dir: Path = Path("./alignment_plots"),
         ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Finds and returns optimal scale and shift factors for every frame with an

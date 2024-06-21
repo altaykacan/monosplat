@@ -7,14 +7,15 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from modules.core.maps import PointCloud
-from modules.depth.models import DepthModel
+from modules.core.models import RAFT
 from modules.core.utils import compute_occlusions, grow_bool_mask
 from modules.core.interfaces import BaseReconstructor, BaseModel, BaseBackprojector, BaseDataset
+from modules.depth.models import DepthModel
 from modules.io.utils import Logger, clean_batch, save_image_torch
 from modules.segmentation.moving_objects import compute_dists
+from modules.segmentation.models import MaskRCNN, SegFormer
 from modules.segmentation.visualization import plot_moving_object_removal_results
 from modules.segmentation.utils import combine_segmentation_masks
-
 
 class SimpleReconstructor(BaseReconstructor):
     def __init__(
@@ -40,6 +41,9 @@ class SimpleReconstructor(BaseReconstructor):
             self.step(frame_ids, images, poses, batch_idx)
 
         self.map.postprocess()
+        if self.clean_pointcloud:
+            self.map.clean()
+
         self.map.save(self.output_dir / Path("map.ply"))
 
     def step(self, frame_ids: torch.Tensor, images: torch.Tensor, poses: torch.Tensor, batch_idx: int):
@@ -63,7 +67,7 @@ class SimpleReconstructor(BaseReconstructor):
             self.logger.log_step(state={"ids": frame_ids, "depths": depths, "images": images})
 
 
-# TODO implement
+# TODO implement and debug, there is some mistake (truck wasn't removed completely) (probably max dists threshold is the issue)
 class MovingObjectRemoverReconstructor(SimpleReconstructor):
     def __init__(
             self,
@@ -81,7 +85,7 @@ class MovingObjectRemoverReconstructor(SimpleReconstructor):
         self.backprojector = backprojector
         self.depth_model = depth_model
         self.flow_model = flow_model
-        self.seg_model = seg_model
+        self.seg_model = seg_model # semantic segmentation
         self.ins_seg_model = ins_seg_model # instance segmentation
 
         self.map = PointCloud()
@@ -103,7 +107,7 @@ class MovingObjectRemoverReconstructor(SimpleReconstructor):
 
     def run(self):
         super().run()
-        self.raw_map.postprocess()
+        self.raw_map.postprocess() # to compare with/without point clouds
         self.raw_map.save(self.output_dir / Path("map_no_mov_obj_filtering.ply"))
 
     def step(
@@ -134,7 +138,7 @@ class MovingObjectRemoverReconstructor(SimpleReconstructor):
         })
         moveable_masks = combine_segmentation_masks(seg_preds["masks_dict"]) # [N, 1, H, W] tensor
         people_masks = seg_preds["masks_dict"]["person"] # [N, 1, H, W] tensor
-        instance_masks = ins_preds["masks"] # list lists of [N, 1, H, W] tensors
+        instance_masks = ins_preds["masks"] # list of lists [1, 1, H, W] tensors
 
         # Collect source frames around a window from the current target frame
         moving_object_votes = {} # each flow step votes for moving objects
@@ -232,5 +236,43 @@ class MovingObjectRemoverReconstructor(SimpleReconstructor):
         return None
 
 
+# TODO can extend this factory implementation and do it for other classes too
+class ReconstructorFactory():
+    def __init__(self, dataset: BaseDataset, backprojector: BaseBackprojector, depth_model: BaseModel) -> None:
+        self.dataset = dataset
+        self.backprojector = backprojector
+        self.depth_model = depth_model
 
+    def get_reconstructor(self, reconstructor_type: str, cfg: Dict = {}) -> BaseReconstructor:
+        if reconstructor_type == "simple":
+            recon = SimpleReconstructor(self.dataset, self.backprojector, self.depth_model, cfg)
+        elif reconstructor_type == "moving_obj":
+            if cfg["flow_model_type"] == "raft":
+                flow_model = RAFT()
+            else:
+                raise NotImplementedError
+
+            if cfg["seg_model_type"] == "segformer":
+                seg_model = SegFormer()
+            else:
+                raise NotImplementedError
+
+            if cfg["ins_seg_model_type"] == "mask_rcnn":
+                ins_seg_model = MaskRCNN()
+            else:
+                raise NotImplementedError
+
+            recon =  MovingObjectRemoverReconstructor(
+                                                self.dataset,
+                                                self.backprojector,
+                                                self.depth_model,
+                                                flow_model,
+                                                seg_model,
+                                                ins_seg_model,
+                                                cfg,
+                                            )
+        else:
+            raise NotImplementedError
+
+        return recon
 

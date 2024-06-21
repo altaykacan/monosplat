@@ -5,6 +5,10 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 
+from modules.core.interfaces import BaseDataset
+from modules.io.datasets import CombinedColmapDataset
+from modules.scale_alignment.utils import centered_moving_average
+
 
 def save_histogram(
         tensor_inputs: List[torch.Tensor],
@@ -57,13 +61,15 @@ def save_histogram(
 
     return None
 
+
 def save_scale_plot(
         scales: List[torch.Tensor],
         frame_ids: List[List[int]],
         labels: List[str] = None,
         title: str = "Scale plot",
         filename: Union[Path, str]="scale_plot",
-        output_dir: Union[Path, str]="."
+        output_dir: Union[Path, str]=".",
+        window_size: int = 5,
         ) -> None:
         if not isinstance(scales, list):
             scales = [scales]
@@ -86,19 +92,16 @@ def save_scale_plot(
         plt.figure()
         plt.grid()
         plt.title(title)
-        max_frames = 0
-        for curr_scale, curr_frame_ids, curr_label in zip(scales, frame_ids, labels):
-            # TODO plot the means of each curve with the same color as the curve for  the same flow step
+        for curr_scale, curr_frame_id, curr_label in zip(scales, frame_ids, labels):
+            # curr_scale and curr_frame_id are both 1D lists
             scale_array = curr_scale.detach().cpu().numpy()
+            moving_avg = centered_moving_average(scale_array, window_size)
             mean_scale = np.mean(scale_array)
-            line = plt.plot(curr_frame_ids, scale_array, label=curr_label, alpha=0.7)
-            plt.hlines(mean_scale,min(curr_frame_ids), max(curr_frame_ids), linewidth=0.5, colors=line[0].get_color(), alpha=1.0, linestyles='dashed')
+            line = plt.plot(curr_frame_id, scale_array, label=curr_label, alpha=0.4)
+            plt.plot(curr_frame_id, moving_avg, color=line[0].get_color(), alpha=1.0)
+            plt.hlines(mean_scale, curr_frame_id[0], curr_frame_id[-1], linewidth=0.5, colors=line[0].get_color(), alpha=1.0, linestyles='dashed')
 
-            # Keep track of the most amount of frame ids for nice plotting
-            if len(curr_frame_ids) > max_frames:
-                max_frames = len(curr_frame_ids)
-
-        plt.xlabel("Frame IDs")
+        plt.xlabel("Frames")
         plt.ylabel("Scale values")
         plt.legend()
         plt.savefig(str(output_dir / filename) + ".png")
@@ -111,45 +114,76 @@ def plot_dense_alignment_results(
         frame_scales_for_hist: Dict,
         scale_tensors_to_plot: Dict,
         log_dir: Path,
+        dataset: BaseDataset,
         ) -> None:
 
     # Plot the mean of scales for the different flow steps
     labels = []
     frame_ids_for_plot = [] # lists of lists of integers
+    frame_indices_for_plot = [] # needed for combined datasets
     scales_for_plot = [] # lists of 1D tensors
     for flow_step, scale_per_flow in scales.items():
         sorted_pairs = sorted(scale_per_flow.items()) # the keys are the target frame ids
         sorted_frame_ids = [pair[0] for pair in sorted_pairs]
+        sorted_frame_indices = [dataset.frame_ids.index(frame_id) for frame_id in sorted_frame_ids]
         sorted_scales = torch.tensor([pair[1] for pair in sorted_pairs])
 
         labels.append(f"Dense Scales with Flow Step {flow_step}")
         frame_ids_for_plot.append(sorted_frame_ids)
+        frame_indices_for_plot.append(sorted_frame_indices)
         scales_for_plot.append(sorted_scales)
 
-    save_scale_plot(
-        scales_for_plot,
-        frame_ids_for_plot,
-        labels,
-        title="Dense Scale Alignment Results",
-        filename="dense_scale_plot",
-        output_dir=log_dir / Path("alignment_plots")
-        )
+    if isinstance(dataset, CombinedColmapDataset):
+        # Combined datasets have jumps in the frame ids due to naming convention
+        # need to look at the index of the said frame instead of the id when plotting
+        save_scale_plot(
+            scales_for_plot,
+            frame_indices_for_plot,
+            labels,
+            title="Dense Scale Alignment Results",
+            filename="dense_scale_plot",
+            output_dir=log_dir
+            )
+    else:
+        save_scale_plot(
+            scales_for_plot,
+            frame_ids_for_plot,
+            labels,
+            title="Dense Scale Alignment Results",
+            filename="dense_scale_plot",
+            output_dir=log_dir
+            )
 
     # Plot histograms of per-frame scales for different flow steps
     for curr_frame_id in frame_ids_for_hist:
         labels = []
         scales_for_histogram = [] # list of 1D tensors
+        filtered_scales_for_histogram = [] # lists of 1D tensors to get nicer visualizations
         for flow_step, scale_per_flow in frame_scales_for_hist.items():
                 curr_scales = scale_per_flow[curr_frame_id]["forward"]
                 labels.append(f"Frame {curr_frame_id}, flow {flow_step} - Forward")
                 scales_for_histogram.append(curr_scales)
 
+                # Remove values deviating more than 3 times the std from the mean
+                std = curr_scales.std()
+                mean = curr_scales.mean()
+                filtered_scales = curr_scales[torch.abs(curr_scales - mean) < 3 * std]
+                filtered_scales_for_histogram.append(filtered_scales)
+
         save_histogram(
             scales_for_histogram,
             labels,
-            title=f"Dense Scale Alignment - Frame {curr_frame_id} for Different Flow Steps",
+            title=f"Dense Scale Align. Frame {curr_frame_id} for Different Flow Steps",
             filename=f"dense_scale_hist_different_flow_steps_frame_{curr_frame_id}",
-            output_dir=log_dir / Path("plots")
+            output_dir=log_dir
+            )
+
+        save_histogram(
+            filtered_scales_for_histogram,
+            labels,
+            title=f"Dense Scale Align. - Frame {curr_frame_id} for Different Flow Steps 3" + r'$\sigma$' + " thresholding",
+            filename=f"dense_scale_filtered_hist_different_flow_steps_frame_{curr_frame_id}",
+            output_dir=log_dir
             )
 
     # Plot histograms of different frames for a given flow step
@@ -167,7 +201,7 @@ def plot_dense_alignment_results(
             labels,
             title=f"Dense Scale Alignment Histograms - Different Frames for Flow Step {flow_step}",
             filename=f"dense_scale_hist_flow_step_{flow_step}",
-            output_dir=log_dir / Path("alignment_plots")
+            output_dir=log_dir
             )
 
     # Plot histograms for same frames backward and forward for different flow steps
@@ -189,11 +223,11 @@ def plot_dense_alignment_results(
             labels,
             title=f"Dense Scale Alignment Histograms - Frame {curr_frame_id}",
             filename=f"dense_scale_hist_frame_forward_backward_frame_{curr_frame_id}",
-            output_dir=log_dir / Path("alignment_plots")
+            output_dir=log_dir
             )
 
     # Plot the scale tensors
-    output_dir = log_dir / Path("alignment_plots/tensors")
+    output_dir = log_dir / Path("tensors")
     output_dir.mkdir(exist_ok=True, parents=True)
     for flow_step, scales_per_frame in scale_tensors_to_plot.items():
         for frame_id, scale_tensors in scales_per_frame.items():
@@ -206,9 +240,9 @@ def plot_dense_alignment_results(
             min_value = np.min(f[f > 0])
             mean_value = np.mean(f[f > 0])
             plt.figure()
-            plt.colorbar()
             plt.imshow(f, cmap="viridis")
             plt.axis('off')
-            plt.title(f"Frame {frame_id} - Flow Step {flow_step} - Max: {max_value:.2f}, Mean: {mean_value:.2f}, Min: {min_value:.2f}")
-            plt.savefig(str(output_dir / filename), bbox_inches='tight', pad_inches=0)
+            plt.title(f"Frame {frame_id} - Flow Step {flow_step} Mean: {mean_value:.2f}")
+            plt.colorbar()
+            plt.savefig(str(output_dir / filename))
             plt.close()

@@ -108,6 +108,7 @@ class BaseReconstructor(ABC):
         self.output_dir = Path(cfg.get("output_dir", "."))
         self.batch_size = cfg.get("batch_size", 2)
         self.log_every_nth_batch = cfg.get("log_every_nth_batch", 50)
+        self.clean_pointcloud = cfg.get("clean_pointcloud", False)
 
 class BaseBackprojector(ABC):
     @abstractmethod

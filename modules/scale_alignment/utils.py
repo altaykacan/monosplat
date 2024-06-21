@@ -38,3 +38,16 @@ def project_pcd_o3d(
     depth_projection = torch.tensor(np.asarray(depth_projection.to_legacy()))
 
     return depth_projection
+
+
+def centered_moving_average(array: np.ndarray, window_size: int) -> np.ndarray:
+    """
+    Computes the centered moving average of a 1D numpy array.
+    Uses 'same' 1D convolutions so the arrays are mirrored on the boundaries.
+
+    Parameters:
+    - array: The input 1D array
+    - window_size: The size of the moving window.
+    """
+    moving_average = np.convolve(array, np.ones(window_size), "same") / window_size
+    return moving_average

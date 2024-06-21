@@ -35,7 +35,7 @@ class CustomDataset(BaseDataset):
             depth_dir: Union[Path, str] = None,
             scales_and_shifts_path: Union[Path, str] = None,
             depth_scale: float = None,
-            start: int = 0,
+            start: int = None,
             end: int = -1,
             device: str = None,
             gt_pose_path: Union[Path, str]= None,
@@ -315,6 +315,9 @@ class CustomDataset(BaseDataset):
     def truncate_paths_and_poses(self):
         start_idx_found = False
         end_idx_found = False
+        if self.start is None:
+            self.start = self.frame_ids[0]
+
         # self.start and self.end are frame indices but we need the index in the lists (some frame ids might not be in the pose files)
         while not start_idx_found:
             try:
@@ -419,8 +422,6 @@ class CustomDataset(BaseDataset):
         return frame_id, image, scaled_pose
 
 
-
-
 class KITTIDataset(CustomDataset):
     def __init__(
             self,
@@ -434,7 +435,7 @@ class KITTIDataset(CustomDataset):
             depth_dir: Union[Path, str] = None,
             scales_and_shifts_path: Union[Path, str] = None,
             depth_scale: float = None,
-            start: int = 0,
+            start: int = None,
             end: int = -1
             ):
         # KITTI data has poses for every frame and no frame id in poses.txt, so we need to count it
@@ -493,9 +494,9 @@ class KITTI360Dataset(CustomDataset):
             self,
             seq: int,
             cam_id: int,
-            target_size: Tuple = (),
             pose_scale: float = 1.0,
-            start: int = 0,
+            target_size: Tuple = (),
+            start: int = None,
             end: int = -1
             ) -> None:
         # KITTI360 specific preparation before calling the constructor of the super class
@@ -583,7 +584,7 @@ class ColmapDataset(CustomDataset):
             depth_dir: Union[Path, str] = None,
             scales_and_shifts_path: Union[Path, str] = None,
             depth_scale: float = None,
-            start: int = 0,
+            start: int = None,
             end: int = -1
             ) -> None:
         image_dir = Path(colmap_dir) / Path("../../data/rgb")
@@ -799,7 +800,7 @@ class CombinedColmapDataset(ColmapDataset):
             depth_dir: Union[Path, str] = None,
             scales_and_shifts_path: Union[Path, str] = None,
             depth_scale: float = None,
-            start: int = 1,
+            start: int = None,
             end: int = -1
             ) -> None:
         super().__init__(
@@ -850,14 +851,14 @@ class CombinedColmapDataset(ColmapDataset):
         """
         frame_id = str(frame_id) # convert combined integer into string
         vid_id = frame_id[0] # video id as string
-        vid_frame_id = frame_id[1:] # frame id within the video
+        vid_frame_id = frame_id[1:] # frame id within the video (frame number)
         vid_frame_id = vid_frame_id.zfill(PADDED_IMG_NAME_LENGTH) # pad with zeros
         filename = vid_id + "." + vid_frame_id
         return filename
 
     def get_depth_path_from_frame_id(self, depth_dir: Path, frame_id: int) -> Path:
-        depth_path = Path(depth_dir, filename)
         filename = self.convert_frame_id_to_filename(frame_id) + ".npy"
+        depth_path = Path(depth_dir, filename)
         return depth_path
 
     @classmethod
