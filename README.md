@@ -12,7 +12,7 @@ git submodule update --init --recursive
 ```
 
 
-Environment setup, tested with PyTorch 2.0.1, CUDA 11.8, and Python 3.8:
+Environment setup, currently only tested with PyTorch 2.0.1, CUDA 11.8, and Python 3.8:
 ```bash
 conda env create -n thesis python=3.8
 conda activate thesis
@@ -26,15 +26,18 @@ mim install mmengine
 pip install mmcv==2.1.0 -f https://download.openmmlab.com/mmcv/dist/cu118/torch2.0/index.html # this is very sensitive to the pytorch and CUDA versions, check official documentation
 pip install mmsegmentation
 
-### For UniDepth ###
-
-### For DSINE ###
+### For 3DGS ###
+# Make sure to have CUDA 11.8 or higher on your system
+# If you get weird errors on different machines after building the pip packages, uninstall them, delete the build folders, and install them again using pip
+pip install submodules/gaussian-splatting/submodules/diff-gaussian-rasterization-entropy
+pip install submodules/gaussian-splatting/submodules/simple-knn
 
 ####################
 
 # Generally needed
 pip install open3d
 pip install plyfile
+pip install tensorboard
 pip install hydra-core --upgrade # for configs
 pip install moviepy # for video creation
 
