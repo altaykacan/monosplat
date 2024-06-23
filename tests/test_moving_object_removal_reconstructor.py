@@ -3,7 +3,7 @@ import sys
 
 import torch
 
-from modules.io.datasets import CustomDataset, KITTIDataset, KITTI360Dataset, COLMAPDataset
+from modules.io.datasets import CustomDataset, KITTIDataset, KITTI360Dataset, ColmapDataset
 from modules.depth.models import Metric3Dv2, PrecomputedDepthModel
 from modules.segmentation.models import SegFormer, MaskRCNN
 from modules.core.models import RAFT
@@ -36,7 +36,7 @@ dataset = KITTIDataset(
 # orig_intrinsics = [2143.78, 2143.78, 512, 288]
 # target_size = [576, 1024]
 # depth_dir = "/usr/stud/kaa/data/root/ds01/data/depths/arrays"
-# dataset = COLMAPDataset(colmap_dir, pose_scale, orig_intrinsics, target_size=target_size, depth_dir=depth_dir)
+# dataset = ColmapDataset(colmap_dir, pose_scale, orig_intrinsics, target_size=target_size, depth_dir=depth_dir)
 
 depth_model = Metric3Dv2(dataset.intrinsics, backbone="vit_giant")
 # depth_model = PrecomputedDepthModel(dataset, depth_scale=1/30)

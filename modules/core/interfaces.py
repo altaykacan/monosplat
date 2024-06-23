@@ -109,6 +109,7 @@ class BaseReconstructor(ABC):
         self.batch_size = cfg.get("batch_size", 2)
         self.log_every_nth_batch = cfg.get("log_every_nth_batch", 50)
         self.clean_pointcloud = cfg.get("clean_pointcloud", False)
+        self.classes_to_remove = cfg.get("classes_to_remove", ["car"])
 
 class BaseBackprojector(ABC):
     @abstractmethod

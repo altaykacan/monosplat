@@ -235,7 +235,7 @@ class PrecomputedDepthModel(DepthModel):
     `input_dict`: `{"frame_ids":  List[int] frame ids of the images to 'predict' depths by loading in precomputed depths}`
     `output_dict`: `{"depths": Batched loaded in precomputed depth values [N, 1, H, W]}`
     """
-    def __init__(self, dataset: CustomDataset, device: str = None):
+    def __init__(self, dataset: BaseDataset, device: str = None):
         self._dataset = dataset
         if device is None:
             self._device ="cuda" if torch.cuda.is_available() else "cpu"

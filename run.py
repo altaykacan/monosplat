@@ -21,7 +21,12 @@ def main(cfg: DictConfig) -> None:
     #
     # Commands
     # python 1_extract_frames_from_video.py --video_path /usr/stud/kaa/data/root/ds01/data/GX010061.MP4 --resize_factor 2
-    # python 2_run_colmap.py  ...
+    # python 2_run_colmap.py  -s --no_gpu --init-intrinsics
+    #
+    # Running 2_run_colmap.py with sequential matcher
+    # python 2_run_colmap.py -s /usr/stud/kaa/data/root/kitti360_0_mini/poses/colmap_sequential --no_gpu --init_intrinsics 552.55 682.05 238.77 --use_sequential_matcher --vocab_tree_path /usr/stud/kaa/data/colmap/vocab_tree_flickr100K_words32K.bin
+
+
 
 if __name__=="__main__":
     main()

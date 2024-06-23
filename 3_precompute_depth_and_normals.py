@@ -13,7 +13,7 @@ from tqdm import tqdm
 from torchvision.transforms.functional import pil_to_tensor
 
 from modules.core.utils import grow_bool_mask
-from modules.io.utils import ask_to_clear_dir
+from modules.io.utils import ask_to_clear_dir, create_depth_txt, create_associations_txt
 from modules.depth.models import Metric3Dv2
 from modules.core.models import Metric3Dv2NormalModel
 from modules.segmentation.models import SegFormer
@@ -23,6 +23,7 @@ from modules.segmentation.utils import combine_segmentation_masks
 def main(args):
     root_dir = Path(args.root_dir)
     model_name = args.model.lower()
+    normal_model_name = args.normal_model.lower()
     intrinsics = tuple(args.intrinsics) if args.intrinsics is not None else ()
     skip_depth_png = args.skip_depth_png
     skip_mask_depth_png = args.skip_mask_depth_png
@@ -58,7 +59,7 @@ def main(args):
         raise ValueError(f"The provided model name '{model_name}' is not recognized. Please try 'metric3d-vit'.")
 
     # TODO separate the depth and normal model properly, currently we use metric3Dv2 to get both
-    if not skip_normals:
+    if not skip_normals and normal_model_name == "metric3d_vit":
         normal_model = Metric3Dv2NormalModel(depth_model)
 
     if not skip_depth_png and not skip_mask_depth_png:
@@ -142,20 +143,26 @@ def main(args):
             # Save normal arrays and png images if specified
             if not skip_normals:
                 # TODO actually get some normal models and don't do this hacky way
-                normal_pred = normal_model.predict({"metric3d_preds": pred})
+                normal_pred = normal_model.predict({"metric3d_preds": pred, "images": image[None, :, : ,:], "frame_ids": torch.tensor([float(frame_id)])})
                 normals = normal_pred["normals"].squeeze().detach().cpu().numpy()
                 normals_vis = pred["normals_vis"].squeeze().detach().cpu().numpy()
 
                 np.save(normal_array_path, normals)
                 cv2.imwrite(str(normal_png_path), normals_vis, params)
+
+    logging.info("Creating associations.txt and depth.txt for using RGB-D SLAM...")
+    create_depth_txt(data_dir, depth_png_dir)
+    create_associations_txt(data_dir, image_dir, depth_png_dir)
+
     logging.info("Done!")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Predict and save depth and normal predictions as numpy arrays with the original sizes of the images. Optionally saves depth predictions as scaled 16-bit monochrome png images as well.")
-    parser.add_argument("--root_dir", "-r", type=str, help="The root of your data directory.")
-    parser.add_argument("--model", "-m", type=str, help="The model to get depth and normal predictions. Currently only 'metric3d_vit' is implemented which gives both depth and normal predictions.")
-    parser.add_argument("--intrinsics", type=float, nargs=4, help="Camera intrinsics as [fx, fy, cx, cy]. Run '2_run_colmap.py' to get them. If you already have intrinsics, make sure to scale them with the same factor you are resizing your images (dividing image dimensions by 2 -> dividing intrinsic parameters by 2). Provide inputs as '--intrinsics fx fy cx cy'")
+    parser.add_argument("--root_dir", "-r", type=str, required=True, help="The root of your data directory.")
+    parser.add_argument("--model", "-m", type=str, default="metric3d_vit", help="The model to get depth predictions. Currently only 'metric3d_vit' is implemented which gives both depth and normal predictions.")
+    parser.add_argument("--normal_model", "-n", type=str, default="metric3d_vit", help="The model to get depth and normal predictions. Currently only 'metric3d_vit' is implemented which gives both depth and normal predictions.")
+    parser.add_argument("--intrinsics", type=float, nargs=4, required=True, help="Camera intrinsics as [fx, fy, cx, cy]. Run '2_run_colmap.py' to get them. If you already have intrinsics, make sure to scale them with the same factor you are resizing your images (dividing image dimensions by 2 -> dividing intrinsic parameters by 2). Provide inputs as '--intrinsics fx fy cx cy'")
     parser.add_argument("--skip_depth_png", action="store_true", help="Flag to skip saving scaled depth images as 16-bit unsigned integer monochrome png images. These images are useful for RGB-D SLAM.")
     parser.add_argument("--skip_mask_depth_png", action="store_true", help="Flag to skip using moveable object masks to set the depths of moveable objects to a very high value when saving depth png images. This is useful to ignore potentially moving objects by setting a hard depth limit on the RGB-D SLAM system")
     parser.add_argument("--skip_normals", action="store_true", help="Flag to skip predicting normals. Use this if your 'model' does not have normal prediction capabilities.")

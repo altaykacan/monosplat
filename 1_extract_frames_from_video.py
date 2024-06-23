@@ -10,7 +10,7 @@ import numpy as np
 import cv2
 
 from modules.core.utils import compute_target_intrinsics, resize_image_torch
-from modules.io.utils import ask_to_clear_dir
+from modules.io.utils import ask_to_clear_dir, create_rgb_txt
 from configs.data import PADDED_IMG_NAME_LENGTH
 
 def main(args):
@@ -85,6 +85,11 @@ def main(args):
         logging.info(f"Resized all your images to {target_size} (H, W)")
     if args.intrinsics is not None:
         logging.info(f"Your initial intrinsics were: {args.intrinsics}. After resizing to {target_size} from {size}, the new intrinsics would be {target_intrinsics}.")
+
+    # Create rgb.txt for running SLAM on TUM RGB-D dataset format data
+    logging.info(f"Creating rgb.txt for running SLAM at {str(output_dir)}...")
+    create_rgb_txt(data_dir, output_dir)
+
     logging.info(f"Read {count} frames in total. Finished extracting frames from video!")
 
 

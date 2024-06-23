@@ -3,7 +3,7 @@ import sys
 
 import torch
 
-from modules.io.datasets import CustomDataset, KITTIDataset, KITTI360Dataset, COLMAPDataset
+from modules.io.datasets import CustomDataset, KITTIDataset, KITTI360Dataset, ColmapDataset
 from modules.depth.models import Metric3Dv2, PrecomputedDepthModel
 from modules.core.backprojection import Backprojector
 from modules.core.reconstructors import SimpleReconstructor
@@ -33,11 +33,11 @@ pose_scale = 19.96
 orig_intrinsics = [534.045, 534.045, 512, 288]
 target_size = [576, 1024]
 depth_dir = "/usr/stud/kaa/data/root/ds01/data/depths/arrays"
-dataset = COLMAPDataset(colmap_dir, 1.0, orig_intrinsics, target_size=target_size, depth_dir=depth_dir,  depth_scale=1 / pose_scale)
+dataset = ColmapDataset(colmap_dir, 1.0, orig_intrinsics, target_size=target_size, depth_dir=depth_dir,  depth_scale=1 / pose_scale, end=50)
 
-# depth_model = Metric3Dv2(dataset.intrinsics, backbone="vit_giant")
-depth_model = PrecomputedDepthModel(dataset)
-backprojector = Backprojector(cfg={"dropout":0.99}, intrinsics=dataset.intrinsics)
+depth_model = Metric3Dv2(dataset.intrinsics, backbone="vit_giant")
+# depth_model = PrecomputedDepthModel(dataset)
+backprojector = Backprojector(cfg={"dropout":0.8}, intrinsics=dataset.intrinsics)
 recon = SimpleReconstructor(dataset, backprojector, depth_model, cfg={"batch_size": 4, "output_dir": "tests/test_results/debug"})
 recon.run()
 

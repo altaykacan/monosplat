@@ -10,7 +10,6 @@ for both clouds.
 The registration results are evaluated with (from open3D ICP tutorial):
 - fitness, which measures the overlapping area (# of inlier correspondences / # of points in target). The higher the better.
 - inlier_rmse, which measures the RMSE of all inlier correspondences. The lower the better.
-
 """
 import json
 import logging
@@ -25,7 +24,7 @@ import open3d as o3d
 
 from modules.pose.alignment import umeyama_alignment
 from modules.pose.utils import get_transformation_matrix
-from modules.io.utils import read_all_poses_and_stamps
+from modules.io.utils import read_all_poses_and_stamps, save_pcd_o3d
 from modules.eval.metrics import (
     compute_accuracy_pcd,
     compute_completion_pcd,
@@ -133,10 +132,28 @@ def main(args):
         bounding_box = ref_pcd.get_axis_aligned_bounding_box()
         pred_pcd = pred_pcd.crop(bounding_box)
 
+        if save_clouds:
+            save_pointclouds_src_target(
+                pred_pcd,
+                ref_pcd,
+                vis_downsample_voxel_size,
+                filename="pcd_after_pred_crop.ply",
+                output_dir=output_dir,
+                )
+
     if crop_ref_cloud:
         logging.info("Cropping reference cloud to be within the bounding box of the predicted cloud...")
         bounding_box = pred_pcd.get_axis_aligned_bounding_box()
         ref_pcd = ref_pcd.crop(bounding_box)
+
+        if save_clouds:
+            save_pointclouds_src_target(
+                pred_pcd,
+                ref_pcd,
+                vis_downsample_voxel_size,
+                filename="pcd_after_ref_crop.ply",
+                output_dir=output_dir,
+                )
 
     # Register the two clouds
     if register_clouds:

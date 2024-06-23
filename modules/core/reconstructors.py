@@ -1,13 +1,14 @@
 """Has implementations of standard models used in the framework"""
 from typing import Dict, List, Union
 from pathlib import Path
+import logging
 
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from modules.core.maps import PointCloud
-from modules.core.models import RAFT
+from modules.core.models import RAFT, Metric3Dv2NormalModel, PrecomputedNormalModel
 from modules.core.utils import compute_occlusions, grow_bool_mask
 from modules.core.interfaces import BaseReconstructor, BaseModel, BaseBackprojector, BaseDataset
 from modules.depth.models import DepthModel
@@ -17,12 +18,17 @@ from modules.segmentation.models import MaskRCNN, SegFormer
 from modules.segmentation.visualization import plot_moving_object_removal_results
 from modules.segmentation.utils import combine_segmentation_masks
 
+log = logging.getLogger(__name__)
+
+
 class SimpleReconstructor(BaseReconstructor):
     def __init__(
             self,
             dataset: BaseDataset,
             backprojector: BaseBackprojector,
             depth_model: BaseModel,
+            normal_model: BaseModel = None,
+            seg_model: BaseModel = None,
             cfg: Dict = {},
             ):
         self.parse_config(cfg) # inherited from interface
@@ -30,6 +36,8 @@ class SimpleReconstructor(BaseReconstructor):
         self.dataset = dataset
         self.backprojector = backprojector
         self.depth_model = depth_model
+        self.normal_model = normal_model # optional
+        self.seg_model= seg_model # optional
 
         self.map = PointCloud()
         self.logger = Logger(self)
@@ -47,6 +55,7 @@ class SimpleReconstructor(BaseReconstructor):
         self.map.save(self.output_dir / Path("map.ply"))
 
     def step(self, frame_ids: torch.Tensor, images: torch.Tensor, poses: torch.Tensor, batch_idx: int):
+        N, C, H, W = images.shape
         depth_preds = self.depth_model.predict({"images": images, "frame_ids": frame_ids})
         depths = depth_preds["depths"]
 
@@ -61,8 +70,39 @@ class SimpleReconstructor(BaseReconstructor):
             depth_scales,
             depth_shifts,
             )
+
+        if self.seg_model is not None:
+            seg_preds = self.seg_model.predict({"images": images, "classes_to_segment": self.classes_to_remove})
+            masks_dict = seg_preds["masks_dict"]
+            semantic_masks = combine_segmentation_masks(masks_dict)
+            semantic_masks = torch.logical_not(semantic_masks) # we want moveables to be False
+            masks_backproj = masks_backproj &  semantic_masks
+
+        if self.normal_model is not None:
+            normal_preds = self.normal_model.predict({"metric3d_preds": depth_preds, "images": images, "frame_ids": frame_ids})
+            normals = normal_preds["normals"] # [N, 3, H, W]
+
+            # Normals are in camera frame, need to rotate to world frame
+            R_WC = poses[:, :3, :3] # [N, 3, 3]
+            normals = torch.bmm(R_WC, normals.view(N, 3, -1)).reshape(N, 3, H, W)
+            _, normals_backproj = self.backprojector.backproject(normals, depths, poses, masks_backproj)
+        else:
+            normals_backproj = None
+
+        # TODO this is low priority, do it if you have time
+        # If both models exist we save an additional boolean tensor marking the ground of the point cloud
+        if (self.seg_model is not None) and (self.normal_model is not None):
+            road_preds = self.seg_model.predict({"images": images, "classes_to_segment": ["road", "sidewalk"]})
+            road_dict = road_preds["masks_dict"]
+            road_masks = combine_segmentation_masks(road_dict)
+
+            # is_road is a [N, 1, num_points] boolean tensor, it's true for every point that is from a road pixel
+            _, is_road = self.backprojector.backproject(road_masks, depths, poses, masks_backproj)
+        else:
+            is_road = None
+
         xyz, rgb = self.backprojector.backproject(images, depths, poses, masks_backproj)
-        self.map.increment(xyz, rgb)
+        self.map.increment(xyz, rgb=rgb, normals=normals_backproj, is_road=is_road)
         if batch_idx % self.log_every_nth_batch == 0:
             self.logger.log_step(state={"ids": frame_ids, "depths": depths, "images": images})
 
@@ -77,6 +117,7 @@ class MovingObjectRemoverReconstructor(SimpleReconstructor):
             flow_model: BaseModel,
             seg_model: BaseModel,
             ins_seg_model: BaseModel,
+            normal_model: BaseModel = None,
             cfg: Dict = {},
             ) -> None:
         self.parse_config(cfg)
@@ -87,6 +128,7 @@ class MovingObjectRemoverReconstructor(SimpleReconstructor):
         self.flow_model = flow_model
         self.seg_model = seg_model # semantic segmentation
         self.ins_seg_model = ins_seg_model # instance segmentation
+        self.normal_model = normal_model # surface normal prediction
 
         self.map = PointCloud()
         self.raw_map = PointCloud()
@@ -98,7 +140,7 @@ class MovingObjectRemoverReconstructor(SimpleReconstructor):
 
         self.flow_steps = cfg.get("flow_steps", [-2, -1, 1, 2])
         self.min_flow = cfg.get("min_flow", 0.5)
-        self.classes_to_seg = cfg.get("classes_to_seg", ["car", "bus", "person", "truck", "bicycle", "motorcycle", "rider"])
+        self.classes_to_remove = cfg.get("classes_to_remove", ["car", "bus", "person", "truck", "bicycle", "motorcycle", "rider"])
         self.max_dists_moving_obj = cfg.get("max_dists_moving_obj", 30)
         self.max_d_moving_obj = cfg.get("max_d_moving_obj", 40.0)
         self.dists_thresh_moving_obj = cfg.get("dists_thresh_moving_obj", 1.0) # dists threshold as this value multiplied by the mean
@@ -130,11 +172,11 @@ class MovingObjectRemoverReconstructor(SimpleReconstructor):
         # Segmentation masks are usually more complete so it helps with robustness
         seg_preds = self.seg_model.predict({
             "images": images,
-            "classes_to_segment": self.classes_to_seg
+            "classes_to_segment": self.classes_to_remove
             })
         ins_preds = self.ins_seg_model.predict({
             "images": images,
-            "classes_to_detect": self.classes_to_seg,
+            "classes_to_detect": self.classes_to_remove,
         })
         moveable_masks = combine_segmentation_masks(seg_preds["masks_dict"]) # [N, 1, H, W] tensor
         people_masks = seg_preds["masks_dict"]["person"] # [N, 1, H, W] tensor
@@ -244,16 +286,30 @@ class ReconstructorFactory():
         self.depth_model = depth_model
 
     def get_reconstructor(self, reconstructor_type: str, cfg: Dict = {}) -> BaseReconstructor:
+        if cfg["seg_model_type"] == "segformer":
+            seg_model = SegFormer()
+        else:
+            seg_model = None
+
+        if cfg["normal_model_type"] == "precomputed":
+            normal_model = PrecomputedNormalModel(self.dataset)
+        elif cfg["normal_model_type"] == "metric3d_vit":
+            normal_model = Metric3Dv2NormalModel(self.depth_model)
+        else:
+            normal_model = None
+
         if reconstructor_type == "simple":
-            recon = SimpleReconstructor(self.dataset, self.backprojector, self.depth_model, cfg)
+            recon = SimpleReconstructor(
+                self.dataset,
+                self.backprojector,
+                self.depth_model,
+                seg_model=seg_model,
+                normal_model=normal_model,
+                cfg=cfg
+                )
         elif reconstructor_type == "moving_obj":
             if cfg["flow_model_type"] == "raft":
                 flow_model = RAFT()
-            else:
-                raise NotImplementedError
-
-            if cfg["seg_model_type"] == "segformer":
-                seg_model = SegFormer()
             else:
                 raise NotImplementedError
 
@@ -269,7 +325,8 @@ class ReconstructorFactory():
                                                 flow_model,
                                                 seg_model,
                                                 ins_seg_model,
-                                                cfg,
+                                                normal_model,
+                                                cfg=cfg,
                                             )
         else:
             raise NotImplementedError

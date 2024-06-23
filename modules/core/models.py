@@ -1,9 +1,14 @@
 from typing import Dict, Tuple
+from pathlib import Path
 
 from modules.segmentation.models import SegmentationModel
-from modules.core.interfaces import BaseMap, BaseModel, BaseReconstructor, BaseBackprojector
+from modules.core.interfaces import BaseMap, BaseModel, BaseReconstructor, BaseBackprojector, BaseDataset
 
 import torch
+import numpy as np
+from PIL import Image
+from torchvision.transforms.functional import pil_to_tensor
+
 
 try:
     from torchvision.models.optical_flow import (
@@ -164,3 +169,64 @@ class Metric3Dv2NormalModel(NormalModel):
         normals = metric3d_preds["normals"]
         normals_vis = metric3d_preds["normals_vis"]
         return {"normals": normals, "normals_vis": normals_vis}
+
+
+# TODO implement
+class PrecomputedNormalModel(NormalModel):
+    """
+    Dummy normal model that loads in precomputed normals from `3_precompute_depths_and_normals.py`
+
+    Expected input and output for `PrecomputedNormalModel.predict()`:
+    `input_dict`: `{"frame_ids":  List[int] frame ids of the images to 'predict' normals by loading in precomputed depths}`
+    `output_dict`: `{"normals": Batched loaded in precomputed normal values [N, 3, H, W], "normals_vis": Same shape tensors but for surface normal visualization}`
+    """
+    def __init__(self, dataset: BaseDataset, device: str = None):
+        self._dataset = dataset
+        if device is None:
+            self._device ="cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            self._device = device
+
+        if not self._dataset.has_depth:
+            raise ValueError("Your dataset has no depth predictions, precomputed depth predictions are needed to use a precomputed normal model.")
+
+    def load(self):
+        pass
+
+    def unload(self):
+        pass
+
+    def _preprocess(self, input_dict: Dict) -> Dict:
+        return input_dict
+
+    def _predict(self, input_dict: Dict) -> Dict:
+        frame_ids = input_dict["frame_ids"]
+        normals = []
+        normals_vis = []
+
+        for frame_id in frame_ids:
+            idx = self._dataset.frame_ids.index(frame_id)
+            normal_path = self._dataset.normal_paths[idx] # hacky way to get the normal paths
+            normal = torch.from_numpy(np.load(normal_path)).double() # [3, H , W]
+
+            # Resize and crop the normal according to the target_size of dataset
+            if self._dataset.size != self._dataset.orig_size:
+                normal = self._dataset.preprocess(normal) # [3, H_new, W_new]
+
+                # Make sure normals have unit magnitude
+                magnitude = torch.linalg.norm(normal, dim=1, keepdims=True)
+                normal = normal / magnitude
+
+            normals.append(normal)
+
+            normal_vis_path = self._dataset.normal_vis_paths[idx]
+            normal_vis = Image.open(normal_vis_path)
+            normal_vis = pil_to_tensor(normal_vis)
+
+            normals_vis.append(normal_vis)
+
+        normals = torch.stack(normals, dim=0).to(self._device) # [N, 3, H_new, W_new]
+        normals_vis = torch.stack(normals_vis, dim=0).to(self._device) # [N, 3, H_new, W_new]
+
+        return {"normals": normals, "normals_vis": normals_vis}
+

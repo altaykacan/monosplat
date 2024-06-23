@@ -310,55 +310,94 @@ def create_rgb_txt(path: Path, image_dir: Path):
     path = Path(path)
     image_dir = Path(image_dir)
 
-    image_names = []
+    image_paths = []
     log_time = datetime.now().strftime('%Y-%m-%d:%H-%M-%S')
 
     for p in image_dir.iterdir():
         if p.is_file() and p.suffix == ".png":
-            image_names.append(p)
+            image_paths.append(p)
 
+    image_paths = sorted(image_paths)
     out_path = path / Path("rgb.txt")
     with open(out_path, "w") as out_file:
         out_file.write("# color images\n")
         out_file.write(f"# in the TUM RGB-D dataset format, created at (year-month-day:hour-minute-second): {log_time}\n")
         out_file.write("# timestamp path\n")
-        for image_path in image_names:
+        for image_path in image_paths:
             timestamp = float(image_path.stem) # no extension
             out_file.write(f"{timestamp} {image_path.relative_to(path)}\n")
 
-    log.info(f"Created 'rgb.txt' at {str(path)}, wrote {len(image_names) + 3} lines...")
+    log.info(f"Created 'rgb.txt' at {str(path)}, wrote {len(image_paths) + 3} lines...")
 
 
-def create_depth_txt(path: Union[Path, str], image_dir: Union[Path, str]):
+def create_depth_txt(path: Union[Path, str], depth_dir: Union[Path, str]):
     """
     Creates `depth.txt` needed for TUM RGB-D dataset format.
     Args:
-        `path`: The path where the `rgb.txt` file will be saved
-        `image_dir`: The path to the directory where depth images are saved
+        `path`: The path where the `depth.txt` file will be saved
+        `depth_dir`: The path to the directory where depth images are saved
     """
     path = Path(path)
-    image_dir = Path(image_dir)
+    depth_dir = Path(depth_dir)
 
-    image_names = []
+    image_paths = []
     log_time = datetime.now().strftime('%Y-%m-%d:%H-%M-%S')
 
-    for p in image_dir.iterdir():
+    for p in depth_dir.iterdir():
         if p.is_file() and p.suffix == ".png":
-            image_names.append(p)
+            image_paths.append(p)
 
+    image_paths = sorted(image_paths)
     out_path = path / Path("depth.txt")
     with open(out_path, "w") as out_file:
         out_file.write("# depth images\n")
         out_file.write(f"# in the TUM RGB-D dataset format, created at (year-month-day:hour-minute-second): {log_time}\n")
         out_file.write("# timestamp path\n")
-        for image_path in image_names:
+        for image_path in image_paths:
             timestamp = float(image_path.stem) # no extension
             out_file.write(f"{timestamp} {image_path.relative_to(path)}\n")
 
 
 # TODO implement, needed for RGB-D SLAM
-def create_associations_txt():
-    pass
+def create_associations_txt(path: Path, image_dir: Path, depth_dir: Path):
+    """
+    Creates the `associations.txt` needed for running RGB-D SLAM with the
+    TUM RGB-D dataset format in ORB-SLAM3.
+
+    The format of the file is, where we do not expect any comments:
+    ```
+    timestamp rgb_relative_path timestamp depth_relative_path
+    ```
+
+    Args:
+        `path`: The path where the `associations.txt` file will be saved
+        `image_dir`: The path to the directory where images are saved
+        `depth_dir`: The path to the directory where depth images are saved
+    """
+    image_paths = []
+    depth_paths = []
+    log_time = datetime.now().strftime('%Y-%m-%d:%H-%M-%S')
+
+    for p in image_dir.iterdir():
+        if p.is_file() and p.suffix == ".png":
+            image_paths.append(p)
+
+    for d in depth_dir.iterdir():
+        if d.is_file() and d.suffix == ".png":
+            depth_paths.append(d)
+
+    image_paths = sorted(image_paths)
+    depth_paths = sorted(depth_paths)
+    if len(image_paths) != len(depth_paths):
+        raise ValueError(f"The length of your image paths ({len(image_paths)}) and depth paths ({len(depth_paths)} do not match! Check your image and depth directories.")
+
+    out_path = path / Path("associations.txt")
+    with open(out_path, "w") as out_file:
+        for image_path, depth_path in zip(image_paths, depth_paths):
+            timestamp = float(image_path.stem) # no extension
+            out_file.write(f"{timestamp} {image_path.relative_to(path)} {timestamp} {depth_path.relative_to(path)}\n")
+
+    print("wrote ", str(out_path))
 
 
 def create_scales_and_shifts_txt(

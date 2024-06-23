@@ -1,5 +1,6 @@
-"""Has implementation of standard map classes for the framework"""
+"""Has implementations of standard map classes for the framework"""
 from pathlib import Path
+import logging
 from typing import Dict, Union
 
 import torch
@@ -8,6 +9,8 @@ import open3d as o3d
 
 from modules.core.interfaces import BaseMap
 from modules.core.utils import unravel_batched_pcd_tensor
+
+log = logging.getLogger(__name__)
 
 
 class PointCloud(BaseMap):
@@ -23,6 +26,7 @@ class PointCloud(BaseMap):
         self.xyz = None
         self.rgb = None
         self.normals = None
+        self.is_road = None
         self.scale = scale
 
     @property
@@ -44,22 +48,29 @@ class PointCloud(BaseMap):
     def has_normals(self):
         return self.normals is not None
 
-    def increment(self, xyz: torch.Tensor, rgb: torch.Tensor = None, normals: torch.Tensor = None):
+    @property
+    def has_road_flag(self):
+        return self.is_road is not None
+
+    def increment(self, xyz: torch.Tensor, rgb: torch.Tensor = None, normals: torch.Tensor = None, is_road: torch.Tensor=None) -> None:
         # Deal with batched input, convert from [N, C, num_el] to [C, N * num_el]
         if len(xyz.shape) == 3:
             N, _, HW = xyz.shape
             xyz = unravel_batched_pcd_tensor(xyz)
             rgb = unravel_batched_pcd_tensor(rgb) if rgb is not None else None
             normals = unravel_batched_pcd_tensor(normals) if normals is not None else None
+            is_road = unravel_batched_pcd_tensor(is_road) if is_road is not None else None
 
         # Initialize or concatenate to existing tensors
         if not self.is_initialized:
             self.xyz = xyz
             self.rgb = rgb
             self.normals = normals
+            self.is_road = is_road
         else:
             self.xyz = torch.cat((self.xyz, xyz), dim=1)
 
+            # If the additional attributes exist, keep adding them, add dummy values if they are missing
             if self.has_rgb:
                 if rgb is not None:
                     self.rgb = torch.cat((self.rgb, rgb), dim=1)
@@ -72,15 +83,22 @@ class PointCloud(BaseMap):
                 else:
                     self.normals = torch.cat((self.normals, torch.zeros_like(normals)), dim=1)
 
+            if self.has_road_flag:
+                if is_road is not None:
+                    self.is_road = torch.cat((self.is_road, is_road), dim=1)
+                else:
+                    self.is_road = torch.cat((self.is_road, torch.zeros_like(is_road)), dim=1)
+
         # Remove masked points, i.e. boolean columns that sum up to 0 (all zeros)
         valid_points_mask = (self.xyz.bool().sum(dim=0) != 0)
         self.xyz = self.xyz[:, valid_points_mask]
         self.rgb = self.rgb[:, valid_points_mask] if self.rgb is not None else None
         self.normals = self.normals[:, valid_points_mask] if self.normals is not None else None
+        self.is_road = self.is_road[:, valid_points_mask] if self.is_road is not None else None
 
         return None
 
-    def transform(self, T: torch.Tensor):
+    def transform(self, T: torch.Tensor) -> None:
         R = T[:3, :3] # [3, 3]
         t = T[:3, 3].unsqueeze(1) # [3, 1], already scaled in the dataset
 
@@ -93,6 +111,7 @@ class PointCloud(BaseMap):
         # Convert to open3d cloud, open3d expects [N, 3] numpy arrays
         pcd = o3d.t.geometry.PointCloud()
         pcd.point.positions = self.xyz.permute(1, 0).cpu().numpy()
+        del self.xyz # free up RAM
         if self.has_rgb:
             # open3d wants normalized float rgb values
             if self.rgb.dtype == torch.uint8:
@@ -100,8 +119,14 @@ class PointCloud(BaseMap):
                 self.rgb = self.rgb / 255
             pcd.point.colors = self.rgb.permute(1, 0).cpu().numpy()
 
+            del self.rgb
+
         if self.has_normals:
-            pcd.point.normals = self.normals.permute(1, 0).cpu().numpy()
+            pcd.point.normals = self.normals.float().permute(1, 0).cpu().numpy()
+            del self.normals
+
+        if self.has_road_flag:
+            pcd.point.is_road = self.is_road.permute(1, 0).int().cpu().numpy()
 
         self.pcd = pcd
 
@@ -129,3 +154,4 @@ class PointCloud(BaseMap):
 
         file_path = str(output_dir / filename) # open3d needs paths as strings
         o3d.io.write_point_cloud(file_path, self.pcd.to_legacy())
+        log.info(f"Wrote point cloud to disk at {file_path} with {len(self.pcd.point)} points!")

@@ -36,7 +36,21 @@ def save_traj(trajectories: List[torch.Tensor], labels: List[str], filename: Uni
     ax.legend()
     ax.set_xlabel('x [m]')
     ax.set_ylabel('y [m]')
+    plt.grid()
     plt.savefig(Path(output_dir) / Path(filename), dpi=90)
+    plt.close()
+
+
+def save_rpe_plot(trans_error: torch.Tensor, stamps: torch.Tensor, filename: Union[Path, str], output_dir: Union[Path, str]="."):
+    """Draws and saves a relative positional error plot over time for pose evaluation"""
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+
+    ax.plot(stamps - stamps[0],trans_error,'-',color="blue")
+    ax.set_xlabel('time [s]')
+    ax.set_ylabel('translational error [m]')
+    plt.grid()
+    plt.savefig(Path(output_dir) / Path(filename),dpi=300)
     plt.close()
 
 

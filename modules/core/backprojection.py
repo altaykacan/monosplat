@@ -92,25 +92,3 @@ class Backprojector(BaseBackprojector):
             masks = masks & (torch.rand((N, C, H, W)).to(device) > dropout)
 
         return masks
-
-
-class SemanticBackprojector(Backprojector):
-    """
-    `Backprojector` that uses a semantic segmentation model to compute
-    backprojection masks
-    """
-    def __init__(self, cfg: Dict, intrinsics: Tuple, segmentation_model: BaseModel, classes_to_segment: List[str] = ["car"]):
-        self.cfg = cfg
-        self.intrinsics = intrinsics
-        self.segmentation_model = segmentation_model
-        self.classes_to_segment = classes_to_segment
-
-    def compute_backprojection_masks(self, images: torch.Tensor, depths: torch.Tensor, depth_scales: torch.Tensor = None, depth_shifts: torch.Tensor = None ) -> torch.Tensor:
-        geometric_masks = super().compute_backprojection_masks(images, depths, depth_scales, depth_shifts)
-        seg_preds = self.segmentation_model.predict({"images": images, "classes_to_segment": self.classes_to_segment})
-        masks_dict = seg_preds["masks_dict"]
-        semantic_masks = combine_segmentation_masks(masks_dict)
-        semantic_masks = torch.logical_not(semantic_masks) # we want moveables to be False
-        masks = geometric_masks | semantic_masks
-
-        return masks

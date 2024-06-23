@@ -15,8 +15,8 @@ import numpy as np
 from tqdm import tqdm
 
 from modules.pose.alignment import umeyama_alignment
-from modules.pose.visualization import save_traj
-from modules.eval.utils import round_results, get_pose_matches, save_rpe_plot
+from modules.pose.visualization import save_traj, save_rpe_plot
+from modules.eval.utils import round_results, get_pose_matches
 from modules.eval.metrics import compute_ate, compute_rpe
 from modules.eval.tum_rgbd_tools.evaluate_ate import align
 from modules.io.utils import find_all_files_in_dir, read_all_poses_and_stamps
@@ -29,11 +29,12 @@ def main(args):
     dataset = args.dataset.lower()
     ref_dataset = args.ref_dataset.lower()
     align_scale = args.align_scale
+    exp_name = "_" + args.exp_name if args.exp_name is not None else ""
 
     # Setup logging
     now = datetime.datetime.now()
     timestamp = now.strftime("%m-%d_%H-%M-%S")
-    output_dir = output_dir / Path(f"pose_{timestamp}")
+    output_dir = output_dir / Path(f"pose{exp_name}_{timestamp}")
     log_path = output_dir.absolute() / Path("log.txt")
     output_dir.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(filename=log_path, level=logging.INFO, format='%(levelname)s - %(message)s')
@@ -69,6 +70,9 @@ def main(args):
         # Align rotation, translation, and (optionally) the scale
         rot, t, s = umeyama_alignment(traj_m, ref_traj_m, align_scale)
         rot_tum, t_tum, trans_error_tum = align(traj_m.numpy(), ref_traj_m.numpy())
+
+        if align_scale:
+            logging.info(f"Computed scale factor to multiply the predicted poses with {s}")
 
         # Compute errors
         trans_error_ate = compute_ate(traj_m, ref_traj_m, rot, t, s)
@@ -174,12 +178,13 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="A script to evaluate multiple predicted poses and compare it to one ground truth (or reference) pose. It reports metrics averaged over the multiple predicted poses.")
 
-    parser.add_argument("--pose_dir", type=str, help="The path to where the predicted pose files are.")
-    parser.add_argument("--ref_pose_path", type=str, help="The path to where the ground truth/reference pose file is.")
-    parser.add_argument("--output_dir", type=str, default="./evaluation/eval_results", help="The directory where the logs and the outputs will be saved. Outputs are timestamped.")
+    parser.add_argument("--pose_dir", "-d", type=str, help="The path to where the predicted pose files are.")
+    parser.add_argument("--ref_pose_path", "-g", type=str, help="The path to where the ground truth/reference pose file is.")
+    parser.add_argument("--output_dir", "-o", type=str, default="./evaluation/eval_results", help="The directory where the logs and the outputs will be saved. Outputs are timestamped.")
     parser.add_argument("--dataset", type=str, help="Dataset format of the predicted pose files.")
     parser.add_argument("--ref_dataset", type=str, help="Dataset format of the ground truth/reference files.")
     parser.add_argument("--align_scale", action="store_true", help="Flag to specify whether in addition to rotations and translations, a scale factor for alignment is computed.")
+    parser.add_argument("--exp_name", type=str, default=None, help="Name of the experiment to add to the output directory")
 
     args = parser.parse_args()
 

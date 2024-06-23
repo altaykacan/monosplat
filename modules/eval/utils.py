@@ -118,16 +118,6 @@ def get_pose_matches(poses: torch.Tensor, ref_poses: torch.Tensor, stamps: Union
     return matched_traj, matched_ref_traj
 
 
-def save_rpe_plot(trans_error: torch.Tensor, stamps: torch.Tensor, filename: Union[Path, str], output_dir: Union[Path, str]="."):
-    """Draws and saves a relative positional error plot over time for pose evaluation"""
-    fig = plt.figure()
-    ax = fig.add_subplot(111)
-
-    ax.plot(stamps - stamps[0],trans_error,'-',color="blue")
-    ax.set_xlabel('time [s]')
-    ax.set_ylabel('translational error [m]')
-    plt.savefig(Path(output_dir) / Path(filename),dpi=300)
-
 
 def save_pointclouds_src_target(source: o3d.geometry.PointCloud,
                                 target: o3d.geometry.PointCloud,
@@ -200,6 +190,7 @@ def do_multiscale_colored_icp(source: o3d.geometry.PointCloud,
         current_transformation = result_icp.transformation
 
     return np.array(current_transformation)
+
 
 def do_point_to_plane_icp(source: o3d.geometry.PointCloud,
                           target: o3d.geometry.PointCloud,

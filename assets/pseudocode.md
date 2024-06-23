@@ -1,22 +1,26 @@
 ```python
 def eval_pointcloud(pred_cloud: PointCloud,
-                    gt_reconstruction: Union[PointCloud, Mesh],
+                    gt_reconstruction: Union[PointCloud],
                     results: ResultsDict
                     ):
 
+    # Using poses for global alignment (same origin), should be faster
     if align_clouds and align_scale:
         rot, t, s = align(pred_cloud.pose, gt_cloud.pose)
         pred_cloud = s * rot * pred_cloud + t
 
+    # Optionally align the scales from the poses too
     if align_clouds and not align_scale:
         rot, t = align(pred_cloud.pose, gt_cloud.pose)
         pred_cloud = rot * pred_cloud + t
 
+    # Lidar clouds from KITTI have a cutoff, deepscenario clouds are also flat
     if crop_pred:
         pred_cloud = pred_cloud.crop(ref_cloud.bounding_box)
     if crop_ref:
         ref_cloud = ref_cloud.crop(pred_cloud.bounding_box)
 
+    # Does registering them make sense?
     if register_clouds:
         if use_color_registration:
             icp_transform = colored_icp_register_both_clouds(pred_cloud, gt_cloud)

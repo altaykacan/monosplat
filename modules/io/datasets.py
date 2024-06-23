@@ -97,6 +97,8 @@ class CustomDataset(BaseDataset):
         self.depth_paths = [] # for precomputed depth
         self.scales = {} # for multiplying depth predictions, frame ids are the keys
         self.shifts = {} # for adding to depth, frame ids are the keys
+        self.normal_paths = [] # for precomputed normals
+        self.normal_vis_paths = [] # for precomputed normal visualizations
         self.poses = []
 
         self.start = start
@@ -124,6 +126,7 @@ class CustomDataset(BaseDataset):
 
         if self.has_depth:
             self.load_depth_paths() # load in precomputed depth paths with scale and shifts if needed
+            self.load_normals_from_depth_paths() # try loading in precomputed normals if they exist
 
     def parse_image_path_and_frame_id(self, cols: List[str]) -> Tuple[Path, int]:
         frame_id = self.parse_frame_id(cols)
@@ -183,6 +186,23 @@ class CustomDataset(BaseDataset):
                 frame_id = int(cols[1])
                 self.scales[frame_id] = float(cols[2])
                 self.shifts[frame_id] = float(cols[3])
+
+        return None
+
+    def load_normals_from_depth_paths(self) -> None:
+        for p in self.depth_paths:
+            normal_path = Path(str(p).replace("depths", "normals"))
+            normal_vis_path = Path(str(p).replace("depths/arrays", "normals/images").replace(".npy", ".png"))
+
+            if not normal_path.exists():
+                log.warning(f"The normal path '{str(normal_path)}' does not exist. Expected to find normals for every precomputed depth. Skipping loading it.")
+                continue
+            self.normal_paths.append(normal_path)
+
+            if not normal_vis_path.exists():
+                log.warning(f"The normal visualization path '{str(normal_path)}' does not exist. Expected to find normal visualizations for every precomputed depth. Skipping loading it.")
+                continue
+            self.normal_vis_paths.append(normal_vis_path)
 
         return None
 
@@ -901,6 +921,22 @@ class CombinedColmapDataset(ColmapDataset):
 
             # Update the value of the list
             self.sub_frame_ids[vid_id] = frame_ids_list
+
+class DataCollator():
+    """
+    Helper class to use as `collate_fn` for PyTorch DataLoaders that enables
+    us to skip images from the dataset when forming the batch.
+
+    Pass this as the `collate_fn` argument to your DataLoader
+    """
+    def __init__(self, use_every_nth: int = 1):
+        self.use_every_nth = use_every_nth
+
+    def __call__(self, batch: List[Tuple[torch.Tensor]]):
+        # TODO Do your collatin' here
+        pass
+
+
 
 
 

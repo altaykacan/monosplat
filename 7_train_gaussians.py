@@ -1,0 +1,1 @@
+# TODO we need to make sure that we take care of the fact that 3DGS only works for simple pinhole cameras where the cx and cy are at the middle

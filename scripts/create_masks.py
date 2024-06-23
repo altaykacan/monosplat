@@ -19,6 +19,7 @@ def main(args):
     output_dir = Path(args.output_dir) if args.output_dir is not None else Path("masks")
     classes_to_mask = args.classes_to_mask
     save_masks_only= args.save_masks_only
+    do_not_invert_mask = args.do_not_invert_mask
     image_extension = args.image_extention
     output_dir = image_dir.parent / output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -35,7 +36,9 @@ def main(args):
         image = F.pil_to_tensor(image).unsqueeze(0) # dummy batch dimension
         masks_dict = model.predict({"images": image, "classes_to_segment": classes_to_mask})
         mask = combine_segmentation_masks(masks_dict["masks_dict"])
-        mask = torch.logical_not(mask)
+
+        if not do_not_invert_mask:
+            mask = torch.logical_not(mask)
 
         if save_masks_only:
             mask = mask.cpu().int().squeeze().numpy()
@@ -59,6 +62,7 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", "-o", type=str, default=None, help="Path to the directory where the masked images or masks will be saved. This path is relative to the parent directory of 'image_dir'")
     parser.add_argument("--classes_to_mask", nargs="+", default=["car"], help="List of classes to mask, provide input as '--classes_to_mask car person bus'")
     parser.add_argument("--save_masks_only", action="store_true", help="Flag to specify whether only masks are saved or the masked images are saved. Saving the masked images could be useful for running SLAM so it doesn't pick up features on distant clouds in the sky.")
+    parser.add_argument("--do_not_invert_mask", action="store_true", help="Flag to specify whether the pixels belonging to the masked objects are set to True or not. Default behaviour is to invert the mask (so we can remove the masked pixels)")
     parser.add_argument("--image_extention", type=str, choices=["png", "jpg"], default="png", help="Extension of the input images")
 
     args = parser.parse_args()
