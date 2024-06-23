@@ -4,6 +4,3 @@
 [submodule "submodules/Metric3D"]
 	path = submodules/Metric3D
 	url = git@github.com:YvanYin/Metric3D.git
-[submodule "submodules/gaussian-splatting"]
-	path = submodules/gaussian-splatting
-	url = git@github.com:altaykacan/gaussian-splatting.git
