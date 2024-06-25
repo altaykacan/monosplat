@@ -32,6 +32,9 @@ def main(args):
     scale_factor_depth_png = args.scale_factor_depth_png
     debug = args.debug
 
+    if not root_dir.exists():
+        raise RuntimeError(f"Your root_dir at '{str(root_dir)}' does not exist! Please make sure you give the right path.")
+
     data_dir = root_dir / Path("data")
     image_dir = data_dir / Path("rgb")
 

@@ -56,7 +56,7 @@ def main(args) -> None:
         os.makedirs(args.source_path + "/distorted/sparse", exist_ok=True)
 
         ## Feature extraction, image path is changed to follow our directory structure - Altay
-        feat_extracton_cmd = colmap_command + " feature_extractor "\
+        feat_extraction_cmd = colmap_command + " feature_extractor "\
             "--database_path " + args.source_path + "/distorted/database.db \
             --image_path " + str(image_dir.absolute()) + " \
             --ImageReader.single_camera 1 \
@@ -70,9 +70,10 @@ def main(args) -> None:
             else:
                 intrinsics_arg =f"'{fx}, {fy}, {cx}, {cy}'"
 
-            feat_extracton_cmd += " " + "--ImageReader.camera_params " + intrinsics_arg
+            feat_extraction_cmd += " " + "--ImageReader.camera_params " + intrinsics_arg
 
-        exit_code = os.system(feat_extracton_cmd)
+        logging.info(f"Command used to run feature extraction: \n {feat_extraction_cmd}")
+        exit_code = os.system(feat_extraction_cmd)
         if exit_code != 0:
             logging.error(f"Feature extraction failed with code {exit_code}. Exiting.")
             exit(exit_code)
@@ -98,6 +99,7 @@ def main(args) -> None:
                 --database_path " + args.source_path + "/distorted/database.db \
                 --SiftMatching.use_gpu " + str(use_gpu)
 
+        logging.info(f"Command used to run feature matching: \n {feat_matching_cmd}")
         exit_code = os.system(feat_matching_cmd)
         if exit_code != 0:
             logging.error(f"Feature matching failed with code {exit_code}. Exiting.")
@@ -116,6 +118,7 @@ def main(args) -> None:
             logging.info("The flag '--fix_intrinsics' is given. Not optimizing given intrinsics...")
             mapper_cmd += " " + "--Mapper.ba_refine_focal_length 0"
 
+        logging.info(f"Command used to run mapping: \n {mapper_cmd}")
         exit_code = os.system(mapper_cmd)
         if exit_code != 0:
             logging.error(f"Mapper failed with code {exit_code}. Exiting.")

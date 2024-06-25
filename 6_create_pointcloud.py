@@ -11,7 +11,7 @@ from modules.core.models import RAFT
 from modules.depth.models import Metric3Dv2, KITTI360DepthModel, PrecomputedDepthModel
 from modules.segmentation.models import SegFormer, MaskRCNN
 from modules.io.datasets import CustomDataset, ColmapDataset, CombinedColmapDataset, KITTI360Dataset
-from modules.io.utils import find_latest_number_in_dir
+from modules.io.utils import find_latest_number_in_dir, create_intrinsics_txt, create_poses_for_3dgs
 
 def main(args):
     root_dir = Path(args.root_dir)
@@ -38,6 +38,10 @@ def main(args):
     cam_id = 0 if (args.cam_id is None and args.dataset == "kitti360") else args.cam_id
     seq_id = 0 if (args.seq_id is None and args.dataset == "kitti360") else args.seq_id
     debug = args.debug
+
+    # TODO can probably abstract away this script preparation (logging and root_dir checking)
+    if not root_dir.exists():
+        raise RuntimeError(f"Your root_dir at '{str(root_dir)}' does not exist! Please make sure you give the right path.")
 
     recon_root_dir = root_dir / Path("reconstructions")
     recon_root_dir.mkdir(exist_ok=True, parents=True)
@@ -78,7 +82,7 @@ def main(args):
             orig_intrinsics=intrinsics,
             depth_dir=depth_dir,
             depth_scale=depth_scale,
-            scales_and_shifts_path=scales_and_shifts_path
+            scales_and_shifts_path=scales_and_shifts_path,
             )
         if pose_path is not None:
             dataset.pose_path = pose_path
@@ -150,6 +154,10 @@ def main(args):
     reconstructor = factory.get_reconstructor(reconstructor_type, recon_config)
     reconstructor.run()
 
+    # Write poses and intrinsics to use 3DGS later on
+    create_intrinsics_txt(recon_dir, dataset)
+    create_poses_for_3dgs(recon_dir, dataset)
+
 
 if __name__=="__main__":
     # class DebugArgs(NamedTuple):
@@ -180,11 +188,11 @@ if __name__=="__main__":
     # args = DebugArgs()
 
     class DebugArgs(NamedTuple):
-        root_dir: str = "/usr/stud/kaa/data/root/ds_combined"
-        recon_name: str = None
+        root_dir: str = "/usr/stud/kaa/data/root/ds01"
+        recon_name: str = "test"
         reconstructor: str = "simple" # options: "simple" or "moving_obj"
         backprojector: str = "simple" # options: "simple"
-        dataset: str = "combined_colmap" # either "colmap", "combined_colmap", "kitti360", or "custom"
+        dataset: str = "colmap" # either "colmap", "combined_colmap", "kitti360", or "custom"
         pose_path: str = None # default is None, only needed for custom dataset, can overwrite it for colmap datasets
         pose_scale: float = 6.10 # default is 1.0
         depth_scale: float = None # default is None, scales all depths by constant value
@@ -196,7 +204,7 @@ if __name__=="__main__":
         batch_size: int = 2 # batch size used for reconstruction, larger values are faster but needs more GPU memory
         clean_pointcloud: bool = True # flag to whether use statistical outlier removal
         depth_model: str = "precomputed" # available options "metric3d_vit", "precomputed", and "kitti360" for ground truth depths (only works when "--dataset kitti360")
-        normal_model: str = "precomputed" # available options "metric3d_vit", "precomputed"
+        normal_model: str = "precomputed" # default None, available options "metric3d_vit", "precomputed"
         seg_model: str = "segformer" # default None, segmentation model needed for '--backprojector semantic' and '--reconstructor moving_obj'
         ins_seg_model: str = None # default None, instance segmentati n modefd for '--reconstructor moving_obj'
         flow_model: str = None # default None, flow model needed for '--reconstructor moving_obj'
@@ -208,8 +216,8 @@ if __name__=="__main__":
 
     # parser = argparse.ArgumentParser(description="Main script to create dense pointclouds by reprojecting depth predictions using aligned poses.")
 
-    # parser.add_argument("--root_dir", type=str, default="/usr/stud/kaa/data/root/ds_combined", help="Root directory")
-    # parser.add_argument("--recon_name", type=str, default=None, help="Name of the reconstruction")
+    # parser.add_argument("--root_dir", type=str, default="/usr/stud/kaa/data/root/ds_combined", help="Root directory of your dataset. Outputs will be saved at 'root_dir/reconstructions/...'")
+    # parser.add_argument("--recon_name", type=str, default=None, help="Name of the reconstruction. The results will be saved at 'root_dir/reconsturctions/xx_recon_name' where 'xx' is the numbering of the reconstruction.")
     # parser.add_argument("--reconstructor", type=str, default="simple", choices=["simple", "moving_obj"], help="Reconstructor type")
     # parser.add_argument("--backprojector", type=str, default="simple", choices=["simple"], help="Backprojector type")
     # parser.add_argument("--dataset", type=str, default="combined_colmap", choices=["colmap", "combined_colmap", "kitti360", "custom"], help="Dataset type")
