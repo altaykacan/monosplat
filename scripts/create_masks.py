@@ -60,7 +60,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Script to mask out the sky or any other semantic mask and generate a new dataset or just save the masks. Masked regions are set as 'False' or just as black pixels")
     parser.add_argument("--image_dir", "-i", type=str, help="Path to the directory containing the input images")
     parser.add_argument("--output_dir", "-o", type=str, default=None, help="Path to the directory where the masked images or masks will be saved. This path is relative to the parent directory of 'image_dir'")
-    parser.add_argument("--classes_to_mask", nargs="+", default=["car"], help="List of classes to mask, provide input as '--classes_to_mask car person bus'")
+    parser.add_argument("--classes_to_mask", nargs="+", default=["car", "truck", "bus", "person", "bicycle", "train"], help="List of classes to mask, provide input as '--classes_to_mask car person bus'")
     parser.add_argument("--save_masks_only", action="store_true", help="Flag to specify whether only masks are saved or the masked images are saved. Saving the masked images could be useful for running SLAM so it doesn't pick up features on distant clouds in the sky.")
     parser.add_argument("--do_not_invert_mask", action="store_true", help="Flag to specify whether the pixels belonging to the masked objects are set to True or not. Default behaviour is to invert the mask (so we can remove the masked pixels)")
     parser.add_argument("--image_extention", type=str, choices=["png", "jpg"], default="png", help="Extension of the input images")
