@@ -1,7 +1,7 @@
 """Contains dataset implementations that store data related information and can be iterated over"""
 import logging
 from pathlib import Path
-from typing import Union, Tuple, List
+from typing import Union, Tuple, List, Callable
 
 import torch
 import numpy as np
@@ -38,8 +38,6 @@ class CustomDataset(BaseDataset):
             start: int = None,
             end: int = -1,
             device: str = None,
-            gt_pose_path: Union[Path, str]= None,
-            gt_pose_type: str = "kitti360",
             ) -> None:
         self.image_dir = image_dir if isinstance(image_dir, Path) else Path(image_dir)
         self.pose_path = pose_path if isinstance(pose_path, Path) else Path(pose_path)
@@ -57,14 +55,6 @@ class CustomDataset(BaseDataset):
         else:
             self.depth_dir = depth_dir if isinstance(depth_dir, Path) else Path(depth_dir)
             self.has_depth = True
-
-        if gt_pose_path is None:
-            self.gt_pose_path = None
-            self.has_gt_pose = False
-        else:
-            self.gt_pose_path = gt_pose_path
-            self.gt_pose_type = gt_pose_type
-            self.has_gt_pose = True
 
         self.pose_scale = pose_scale
         self.scales_and_shifts_path = scales_and_shifts_path
@@ -270,6 +260,10 @@ class CustomDataset(BaseDataset):
 
             image_path, frame_id = self.parse_image_path_and_frame_id(cols)
 
+            # Saves a lot of time
+            if frame_id > self.end:
+                break
+
             if not image_path.exists():
                 log.warning(f"Image {image_path} specified in pose file can't be found, skipping this frame")
                 continue
@@ -307,7 +301,8 @@ class CustomDataset(BaseDataset):
         self.intrinsics, self.crop_box = compute_target_intrinsics(
                                             self.orig_intrinsics,
                                             self.orig_size,
-                                            self.size)
+                                            self.size
+                                            )
         return None
 
     def preprocess(self, image: torch.Tensor) -> torch.Tensor:
@@ -320,7 +315,7 @@ class CustomDataset(BaseDataset):
         (pointing right), y is vertical (pointing down)
 
         Args:
-            `images`: Unbatched tensors to resize and crop with shape `[C, H, W]`
+            `image`: Unbatched tensor to resize and crop with shape `[C, H, W]`
         """
         C, H, W = image.shape
         crop_box = self.crop_box
@@ -516,6 +511,7 @@ class KITTI360Dataset(CustomDataset):
             cam_id: int,
             pose_scale: float = 1.0,
             target_size: Tuple = (),
+            depth_dir: Path = None,
             start: int = None,
             end: int = -1
             ) -> None:
@@ -556,8 +552,9 @@ class KITTI360Dataset(CustomDataset):
             orig_size,
             target_size,
             gt_depth_dir,
-            start,
-            end
+            depth_dir,
+            start=start,
+            end=end
             )
 
     @classmethod
@@ -608,9 +605,9 @@ class ColmapDataset(CustomDataset):
             end: int = -1
             ) -> None:
         image_dir = Path(colmap_dir) / Path("../../data/rgb")
-        data_dir = Path(colmap_dir) / Path("sparse/0")
-        pose_txt = data_dir / Path("images.txt")
-        points_txt = data_dir / Path("points3D.txt")
+        self.data_dir = Path(colmap_dir) / Path("sparse/0")
+        pose_txt = self.data_dir / Path("images.txt")
+        points_txt = self.data_dir / Path("points3D.txt")
         self.pcd = None
 
         if not pose_txt.is_file():
@@ -645,17 +642,22 @@ class ColmapDataset(CustomDataset):
         #   POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[] as (IMAGE_ID, POINT2D_IDX)
         ```
         """
-        self.pcd = o3d.t.geometry.PointCloud()
+        self.pcd = self.read_colmap_pcd_o3d(points_txt)
+        out_path = self.data_dir / Path("points3D.ply")
+        if not out_path.exists():
+            o3d.io.write_point_cloud(str(out_path), self.pcd.to_legacy())
+
+    @classmethod
+    def read_colmap_pcd_o3d(cls, points_txt_path: Path):
+        pcd = o3d.t.geometry.PointCloud()
         xyz = []
         rgb = []
-
-        with open(points_txt, "r") as file:
+        with open(points_txt_path, "r") as file:
             for line in file:
                 if "#" in line:
                     continue  # means it's a comment
                 else:
                     line_split = line.split(" ")
-
                     point_id, x, y, z, r, g, b = line_split[0:7]
 
                     # Open3D needs normalized integer values for RGB
@@ -666,8 +668,11 @@ class ColmapDataset(CustomDataset):
                     xyz.append([float(x), float(y), float(z)])
                     rgb.append([r, g, b])
 
-        self.pcd.point.positions = np.array(xyz)
-        self.pcd.point.colors = np.array(rgb)
+        pcd.point.positions = np.array(xyz)
+        pcd.point.colors = np.array(rgb)
+        return pcd
+
+
 
     @classmethod
     def parse_frame_id(cls, cols: List[str]) -> int:
@@ -921,22 +926,5 @@ class CombinedColmapDataset(ColmapDataset):
 
             # Update the value of the list
             self.sub_frame_ids[vid_id] = frame_ids_list
-
-class DataCollator():
-    """
-    Helper class to use as `collate_fn` for PyTorch DataLoaders that enables
-    us to skip images from the dataset when forming the batch.
-
-    Pass this as the `collate_fn` argument to your DataLoader
-    """
-    def __init__(self, use_every_nth: int = 1):
-        self.use_every_nth = use_every_nth
-
-    def __call__(self, batch: List[Tuple[torch.Tensor]]):
-        # TODO Do your collatin' here
-        pass
-
-
-
 
 

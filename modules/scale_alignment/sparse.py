@@ -40,7 +40,48 @@ def compute_scale_and_shift(prediction, target, mask):
     return x_0, x_1
 
 
-def least_squares_scale_and_shift(prediction: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+def least_squares_only_scale(
+        prediction: torch.Tensor,
+        target: torch.Tensor,
+        mask: torch.Tensor
+        ) -> torch.Tensor:
+    """
+    Solves the linear least squares equation per-depth to find an optimal
+    scale factor to align the predicted depths to the sparse depths.
+
+    For each pixel in a given frame, we solve `argmin((t_i - scale_j * p_i)**2).sum(dim=i))`
+    where `i` indexes the pixels and `j` indexes the frames. We take the sum over
+    all pixels in the given frame
+
+    Args:
+      `prediction`: The predicted depths as a  `[num_frames, H, W]` tensor
+      `target`: The projected sparse depths as a `[num_frames, H, W]` tensor
+      `mask`: The mask specifying which pixels to use. Also `[num_frames, H, W]`
+    """
+    scales = []
+    # TODO probably can vectorize this
+    for frame_idx in range(prediction.shape[0]):
+        t = target[frame_idx] # [H, W]
+        p = prediction[frame_idx]
+        m = mask[frame_idx]
+        a = t[m].view(-1, 1) # target vector, [num_sparse_depths, 1]
+        b = p[m].view(-1, 1) # input vectors, [num_sparse_depths]
+        B = b
+
+        # Now we have a least squares problem (a - Bx).T (a - Bx)
+        solution = torch.linalg.inv(B.T @ B) @ B.T @ a
+        scales.append(solution[0])
+
+    scales = torch.cat(scales, dim=0)[:, None, None] # [num_frames, 1, 1]
+
+    return scales.squeeze()
+
+
+def least_squares_scale_and_shift(
+        prediction: torch.Tensor,
+        target: torch.Tensor,
+        mask: torch.Tensor
+        ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Solves the linear least squares equation per-depth to find an optimal
     scale and shift factor to align the predicted depths to the sparse depths.
@@ -74,7 +115,7 @@ def least_squares_scale_and_shift(prediction: torch.Tensor, target: torch.Tensor
     scales = torch.cat(scales, dim=0)[:, None, None] # [num_frames, 1, 1]
     shifts = torch.cat(shifts, dim=0)[:, None, None]  # [num_frames, 1, 1]
 
-    return scales, shifts
+    return scales.squeeze(), shifts.squeeze()
 
 
 def do_sparse_alignment(
@@ -87,6 +128,7 @@ def do_sparse_alignment(
         min_d: float = 0.0,
         max_d: float = 30.0,
         log_dir: Path = Path("./alignment_plots"),
+        return_only_scale: bool = True,
         ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Finds and returns optimal scale and shift factors for every frame with an
@@ -115,7 +157,7 @@ def do_sparse_alignment(
         depth = torch.tensor(np.load(depth_paths[depth_idx]))
         dense_depths.append(depth)
 
-    dense_depths = torch.stack(dense_depths, dim=0) # [num_frames, H, W]
+    dense_depths = torch.stack(dense_depths, dim=0).float() # [num_frames, H, W]
 
     # Do some setup with the read-in depth information
     _, H, W = dense_depths.shape
@@ -128,16 +170,22 @@ def do_sparse_alignment(
     sparse_depths = []
     log.info("Extracting sparse depths for sparse scale alignment, this might take some time...")
     for curr_pose in tqdm(poses):
-        sparse_depth = project_pcd_o3d(pcd, W, H, K, curr_pose, depth_max=max_d)
+        sparse_depth = project_pcd_o3d(pcd, W, H, K, torch.linalg.inv(curr_pose), depth_max=max_d)
         sparse_depths.append(sparse_depth.squeeze())
 
     sparse_depths = torch.stack(sparse_depths, dim=0) # [num_frames, H, W]
 
     # Compute alignment
     mask = (sparse_depths > 0.1) & (dense_depths < max_d) & torch.logical_not(ignore_masks)
+    # TODO remove option to compute scale and shift, only scale is better!
     scale, shift = least_squares_scale_and_shift(dense_depths, sparse_depths, mask)
+    only_scale = least_squares_only_scale(dense_depths, sparse_depths, mask)
     scale_check, shift_check = compute_scale_and_shift(dense_depths, sparse_depths, mask) # to double check own results with the DN-splatter implementation
 
-    save_scale_plot([scale], stamps, "sparse_alignment", log_dir)
+    save_scale_plot([(1 / (scale + 0.001)).clamp(-10,10)], stamps, "Smoothed Scales", filename="scale_and_shift", output_dir=log_dir)
+    save_scale_plot([1 / (only_scale + 0.001)], stamps, "Smoothed Scales", filename="only_scale", output_dir=log_dir)
 
-    return scale, shift
+    if return_only_scale:
+        return only_scale, torch.zeros_like(only_scale)
+    else:
+        return scale, shift

@@ -12,6 +12,7 @@ from modules.core.models import RAFT, Metric3Dv2NormalModel, PrecomputedNormalMo
 from modules.core.utils import compute_occlusions, grow_bool_mask
 from modules.core.interfaces import BaseReconstructor, BaseModel, BaseBackprojector, BaseDataset
 from modules.depth.models import DepthModel
+from modules.io.datasets import DataCollator
 from modules.io.utils import Logger, clean_batch, save_image_torch
 from modules.segmentation.moving_objects import compute_dists
 from modules.segmentation.models import MaskRCNN, SegFormer
@@ -41,18 +42,34 @@ class SimpleReconstructor(BaseReconstructor):
 
         self.map = PointCloud()
         self.logger = Logger(self)
-        self.dataloader = DataLoader(self.dataset, self.batch_size, shuffle=False, drop_last=False)
+        self.data_collator = DataCollator(self.use_every_nth)
         self.device = dataset.device
 
     def run(self):
-        for batch_idx, (frame_ids, images, poses) in enumerate(tqdm(self.dataloader)):
-            self.step(frame_ids, images, poses, batch_idx)
+        batch_idx = 0
+        batch = []
+        for i in range(0, len(self.dataset), self.use_every_nth):
+            frame_id, image, pose = self.dataset[i]
+            if len(batch) < self.batch_size:
+                batch.append((frame_id, image, pose))
+
+            # Do step if batch is full or if the next iteration would end the loop
+            if (len(batch) >= self.batch_size) or ((i + self.use_every_nth) >= len(self.dataset)):
+                frame_ids = torch.stack([torch.tensor(el[0]) for el in batch], dim=0)
+                images = torch.stack([torch.tensor(el[1]) for el in batch], dim=0)
+                poses = torch.stack([torch.tensor(el[2]) for el in batch], dim=0)
+
+                self.step(frame_ids, images, poses, batch_idx)
+                batch = []
+                batch_idx +=1
+            else:
+                continue
 
         self.map.postprocess()
         if self.clean_pointcloud:
             self.map.clean()
 
-        self.map.save(self.output_dir / Path("map.ply"))
+        self.map.save(self.output_dir / Path(self.map_name))
 
     def step(self, frame_ids: torch.Tensor, images: torch.Tensor, poses: torch.Tensor, batch_idx: int):
         N, C, H, W = images.shape
@@ -133,7 +150,6 @@ class MovingObjectRemoverReconstructor(SimpleReconstructor):
         self.map = PointCloud()
         self.raw_map = PointCloud()
         self.logger = Logger(self)
-        self.dataloader = DataLoader(self.dataset, self.batch_size, shuffle=False, drop_last=False)
 
     def parse_config(self, cfg: Dict) -> None:
         super().parse_config(cfg)

@@ -1,6 +1,7 @@
 """Utility functions for data and input-output related operations"""
-import logging
 import json
+import shutil
+import logging
 from pathlib import Path
 from datetime import datetime
 from typing import Union, List, Callable, Tuple, Dict
@@ -14,8 +15,8 @@ from plyfile import PlyData
 
 from configs.data import SUPPORTED_DATASETS
 from modules.core.maps import PointCloud
-from modules.core.interfaces import BaseLogger, BaseReconstructor
-from modules.io.datasets import CustomDataset, KITTI360Dataset, KITTIDataset, TUMRGBDDataset, ColmapDataset
+from modules.core.interfaces import BaseLogger, BaseReconstructor, BaseDataset
+from modules.io.datasets import CustomDataset, KITTI360Dataset, KITTIDataset, TUMRGBDDataset, ColmapDataset, CombinedColmapDataset
 
 log = logging.getLogger(__name__)
 
@@ -358,7 +359,6 @@ def create_depth_txt(path: Union[Path, str], depth_dir: Union[Path, str]):
             out_file.write(f"{timestamp} {image_path.relative_to(path)}\n")
 
 
-# TODO implement, needed for RGB-D SLAM
 def create_associations_txt(path: Path, image_dir: Path, depth_dir: Path):
     """
     Creates the `associations.txt` needed for running RGB-D SLAM with the
@@ -438,6 +438,54 @@ def create_scales_and_shifts_txt(
         for i in range(len(stamps)):
             file.write(f"{depth_paths[i]} {stamps[i]} {scales[i].item()} {shifts[i].item()}\n")
     log.info(f"Wrote scales_and_shifts.txt")
+
+def create_intrinsics_txt(out_dir: Path, dataset: BaseDataset) -> None:
+    """
+    Writes `intrinsics.txt` to `out_dir`, for use with 3d gaussian splatting
+    """
+    out_path = out_dir / Path("intrinsics.txt")
+
+    H, W = dataset.size
+    fx, fy, cx, cy = dataset.intrinsics
+    first_frame_id = dataset.frame_ids[0]
+
+    if dataset.pose_scale != 1.0:
+        scale = dataset.pose_scale # use pose scale if it's not the default value
+    elif (dataset.scales == dataset.scales[first_frame_id]).all():
+        scale = 1 / dataset.scales[first_frame_id].item() # if all depth scales are the same use its reciprocal
+    else:
+        # TODO add support for scale and shift factor reading in 3dgs (probably can save the scaled and shifted arrays on disk) (low prio)
+        scale = -1 # else we must use per-depth scale and shift factors from scales_and_shifts.txt in the 3dgs code in the 3dgs code
+
+    with open(out_path, "w") as file:
+        file.write("# Camera list with one line of data per camera, -1 values mean they are ignored: \n")
+        file.write("# CAMERA_ID, MODEL, WIDTH, HEIGHT, Fx, Fy, Cx, Cy, ROI_LEFT, ROI_TOP, ROI_RIGHT, ROI_LOWER, POSE_SCALE \n")
+        file.write("# Number of cameras: 1 \n")
+        file.write(f"1 PINHOLE {W} {H} {fx} {fy} {cx} {cy} -1 -1 -1 -1 {scale}")
+
+    log.info(f"Wrote intrinsics.txt at '{str(out_path)}'")
+
+
+# TODO make this adapt to the start and end of our datasets, currently we just copy the original pose files
+def create_poses_for_3dgs(out_dir: Path, dataset: BaseDataset) -> None:
+    """
+    Creates either `colmap_poses.txt` or `poses.txt` for running 3D gaussian
+    splatting depending on the dataset you provide
+    """
+
+    if isinstance(dataset, (ColmapDataset, CombinedColmapDataset)):
+        log.info(f"Found COLMAP-based dataset, saving 'colmap_poses.txt' at {str(out_dir)}")
+        colmap_pose_path = dataset.pose_path
+        out_path = out_dir / Path("colmap_poses.txt")
+        shutil.copy(colmap_pose_path, out_path)
+
+    else:
+        log.info(f"Found a custom dataset, saving 'poses.txt' at {str(out_dir)}")
+        slam_pose_path = dataset.pose_path
+        out_path = out_dir / Path("poses.txt")
+        shutil.copy(slam_pose_path, out_path)
+
+    log.info(f"Wrote poses at '{str(out_path)}'")
 
 
 def read_deepscenario_sparse_cloud(filename: Union[str, Path]) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -578,6 +626,7 @@ def read_ply_o3d(path: Union[str, Path], convert_to_float32: bool = False) -> o3
         pcd.point.positions = pcd.point.positions.to(o3d.core.Dtype.Float32) # sparse projection doesn't like float32
     return pcd
 
+
 def save_pcd_o3d(
         xyz: torch.Tensor,
         rgb: torch.Tensor = None,
@@ -618,4 +667,3 @@ def save_pcd_o3d(
         cloud.pcd = cloud.pcd.paint_uniform_color(color_rgb)
 
     cloud.save(str(filename) + ".ply", logdir)
-

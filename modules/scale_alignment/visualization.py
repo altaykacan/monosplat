@@ -73,14 +73,16 @@ def save_scale_plot(
         ) -> None:
         if not isinstance(scales, list):
             scales = [scales]
+        if not isinstance(labels, list):
+            labels = [labels]
 
         # If we have a single list and not a nested list we duplicate it
         if not isinstance(frame_ids[0], list):
             frame_ids = [frame_ids for num in range(len(scales))]
 
         if labels == None:
-            labels = ["Scales " + str(num) for num in range(len(scales))]
-        if len(labels) != len(scales):
+            pass
+        if isinstance(labels, list) and len(labels) != len(scales):
             raise ValueError(f"The number of scale tensors ({len(scales)}) don't match the number of labels you provided ({len(labels)})!")
 
         if isinstance(filename, str):
@@ -133,6 +135,29 @@ def plot_dense_alignment_results(
         frame_indices_for_plot.append(sorted_frame_indices)
         scales_for_plot.append(sorted_scales)
 
+        # Save current flow step
+        if isinstance(dataset, CombinedColmapDataset):
+            # Combined datasets have jumps in the frame ids due to naming convention
+            # need to look at the index of the said frame instead of the id when plotting
+            save_scale_plot(
+                scales_for_plot[-1],
+                frame_indices_for_plot[-1],
+                labels[-1],
+                title=f"Dense Scale Alignment Results - Flow Step {flow_step}",
+                filename=f"dense_scale_plot_flow_step_{flow_step}",
+                output_dir=log_dir
+                )
+        else:
+            save_scale_plot(
+                scales_for_plot[-1],
+                frame_ids_for_plot[-1],
+                labels[-1],
+                title=f"Dense Scale Alignment Results - Flow Step {flow_step}",
+                filename=f"dense_scale_plot_flow_step_{flow_step}",
+                output_dir=log_dir
+                )
+
+    # Save all flow steps
     if isinstance(dataset, CombinedColmapDataset):
         # Combined datasets have jumps in the frame ids due to naming convention
         # need to look at the index of the said frame instead of the id when plotting
@@ -141,7 +166,7 @@ def plot_dense_alignment_results(
             frame_indices_for_plot,
             labels,
             title="Dense Scale Alignment Results",
-            filename="dense_scale_plot",
+            filename="dense_scale_plot_all",
             output_dir=log_dir
             )
     else:
@@ -150,7 +175,7 @@ def plot_dense_alignment_results(
             frame_ids_for_plot,
             labels,
             title="Dense Scale Alignment Results",
-            filename="dense_scale_plot",
+            filename="dense_scale_plot_all",
             output_dir=log_dir
             )
 
@@ -161,7 +186,7 @@ def plot_dense_alignment_results(
         filtered_scales_for_histogram = [] # lists of 1D tensors to get nicer visualizations
         for flow_step, scale_per_flow in frame_scales_for_hist.items():
                 curr_scales = scale_per_flow[curr_frame_id]["forward"]
-                labels.append(f"Frame {curr_frame_id}, flow {flow_step} - Forward")
+                labels.append(f"Flow {flow_step} - Forward")
                 scales_for_histogram.append(curr_scales)
 
                 # Remove values deviating more than 3 times the std from the mean
@@ -193,7 +218,7 @@ def plot_dense_alignment_results(
         for curr_frame_id, curr_scales in scale_per_flow.items():
             if len(curr_scales["forward"]) == 0:
                 continue
-            labels.append(f"Frame {curr_frame_id}, flow {flow_step} - Forward")
+            labels.append(f"Frame {curr_frame_id} - Forward")
             scales_for_histogram.append(curr_scales["forward"])
 
         save_histogram(
@@ -218,13 +243,13 @@ def plot_dense_alignment_results(
             scales_for_histogram.append(curr_scales["forward"])
             scales_for_histogram.append(curr_scales["backward"])
 
-        save_histogram(
-            scales_for_histogram,
-            labels,
-            title=f"Dense Scale Alignment Histograms - Frame {curr_frame_id}",
-            filename=f"dense_scale_hist_frame_forward_backward_frame_{curr_frame_id}",
-            output_dir=log_dir
-            )
+            save_histogram(
+                scales_for_histogram,
+                labels,
+                title=f"Dense Scale Alignment Histograms - Frame {curr_frame_id}",
+                filename=f"dense_scale_hist_frame_forward_backward_frame_{curr_frame_id}_flow_step_{flow_step}",
+                output_dir=log_dir
+                )
 
     # Plot the scale tensors
     output_dir = log_dir / Path("tensors")
@@ -243,6 +268,6 @@ def plot_dense_alignment_results(
             plt.imshow(f, cmap="viridis")
             plt.axis('off')
             plt.title(f"Frame {frame_id} - Flow Step {flow_step} Mean: {mean_value:.2f}")
-            plt.colorbar()
+            plt.colorbar(shrink=0.7)
             plt.savefig(str(output_dir / filename))
             plt.close()

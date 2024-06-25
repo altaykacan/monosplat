@@ -2,6 +2,7 @@ import logging
 from typing import Union, List, Tuple, Dict
 from pathlib import Path
 
+
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
@@ -10,9 +11,9 @@ from modules.core.models import RAFT
 from modules.core.interfaces import BaseDataset, BaseModel
 from modules.core.visualization import visualize_flow
 from modules.core.utils import format_intrinsics, compute_occlusions
-from modules.depth.models import PrecomputedDepthModel
+from modules.depth.models import PrecomputedDepthModel, KITTI360DepthModel
 from modules.eval.utils import compute_mean_recursive
-from modules.io.datasets import CombinedColmapDataset
+from modules.io.datasets import CombinedColmapDataset, KITTI360Dataset
 from modules.io.utils import save_image_torch
 from modules.segmentation.models import SegFormer
 from modules.segmentation.utils import combine_segmentation_masks
@@ -34,7 +35,8 @@ def do_dense_alignment(
     log_dir: Path = Path("./alignment_plots"),
     frame_idx_for_hist: int = 8,
     log_every: int = 50,
-    debug: bool = False
+    debug: bool = False,
+    kitti360_depth_type: str = "gt"
     ) -> Dict:
     """
     Does dense scale alignment for each pair of images for multiple flow steps.
@@ -81,9 +83,13 @@ def do_dense_alignment(
     if debug:
         frame_ids_for_hist = [dataset.frame_ids[i] for i in [frame_idx_for_hist, 0, len(dataset) // 8, len(dataset) // 4]]
     else:
-        frame_ids_for_hist = [dataset.frame_ids[i] for i in [frame_idx_for_hist, 0, len(dataset) // 8, len(dataset) // 4, len(dataset) // 2, len(dataset) // 2 + 1, - (len(dataset) // 4), - (len(dataset) // 8)]]
+        frame_ids_for_hist = [dataset.frame_ids[i] for i in [frame_idx_for_hist, 0, len(dataset) // 4, len(dataset) // 2, - (len(dataset) // 4)]]
     flow_model = RAFT()
-    depth_model = PrecomputedDepthModel(dataset)
+
+    if isinstance(dataset, KITTI360Dataset) and kitti360_depth_type == "gt":
+        depth_model = KITTI360DepthModel(dataset)
+    else:
+        depth_model = PrecomputedDepthModel(dataset)
     if mask_moveable_objects:
         seg_model = SegFormer()
         seg_classes = ["car", "bus", "person", "truck", "bicycle", "motorcycle", "rider"]
@@ -95,8 +101,9 @@ def do_dense_alignment(
     log.info(f"Processing flow steps...")
     for flow_step in flow_steps:
         scales[flow_step] = {}
-        frame_scales_for_hist[flow_step] = {}
+        frame_scales_for_hist[flow_step] = {} # for visualization
         scale_tensors_to_plot[flow_step] = {}
+        prev_scale = None # to catch outliers
 
         # TODO do this in a batched manner to speed up a lot (low prio)
         log.info(f"Processing each image pair for flow step {flow_step}. This might take some time...")
@@ -121,13 +128,17 @@ def do_dense_alignment(
             target_depth = target_pred["depths"] # [N, 1, H, W]
             source_depth = source_pred["depths"]
 
-            seg_pred = seg_model.predict({
-                "images": torch.stack((target_image, source_image), dim=0),
-                "classes_to_segment": seg_classes
-                })
-            seg_masks = combine_segmentation_masks(seg_pred["masks_dict"], seg_classes)
-            target_mask = seg_masks[0].unsqueeze(0) # [1, 1, H, W]
-            source_mask = seg_masks[1].unsqueeze(0)
+            if mask_moveable_objects:
+                seg_pred = seg_model.predict({
+                    "images": torch.stack((target_image, source_image), dim=0),
+                    "classes_to_segment": seg_classes
+                    })
+                seg_masks = combine_segmentation_masks(seg_pred["masks_dict"], seg_classes)
+                target_mask = seg_masks[0].unsqueeze(0) # [1, 1, H, W]
+                source_mask = seg_masks[1].unsqueeze(0)
+            else:
+                target_mask = torch.zeros_like(target_depth).bool()
+                source_mask = torch.zeros_like(target_depth).bool()
 
             curr_scale, vis_tensor1, t_z = align_scale_for_image_pair(
                                                 target_depth,
@@ -164,13 +175,25 @@ def do_dense_alignment(
                                             )
 
             if i % log_every == 0:
-                log.info(f"Computed forward scale {curr_scale.mean().item()} and backwards scale {curr_scale_rev.mean().item()} for images {target_id}-{source_id}.")
+                log.info(f"Computed forward scale {curr_scale.mean().item()} and backwards scale {curr_scale_rev.mean().item()} for images {target_id}-{source_id}, t_z: {t_z.item():0.4f}, scaled t_z: {curr_scale.mean().item() * t_z.item():0.4f}.")
 
             mean_scale = (curr_scale.mean() + curr_scale_rev.mean()).item() / 2
-            if mean_scale * t_z <= t_z_thresh:
-                log.warning(f"Scaled up t_z value is less than the threshold ({mean_scale * t_z} < {t_z_thresh}). Skipping images {target_id}-{source_id}")
+            if torch.abs(mean_scale * t_z) <= t_z_thresh:
+                log.warning(f"Scaled up t_z value is less than the threshold ({torch.abs(mean_scale * t_z)} < {t_z_thresh}). Skipping images {target_id}-{source_id}")
+                continue
+            elif torch.abs(t_z) <= 0.2:
+                log.warning(f"Computed t_z value is less than the threshold ({torch.abs(t_z)} < {0.2}). Skipping images {target_id}-{source_id}")
+                continue
             else:
                 scales[flow_step][target_id] = mean_scale
+
+                # If scale increased a lot we start tracking the frame id for detailed plots
+                if (prev_scale is not None) and abs(prev_scale - mean_scale) / prev_scale > 1.5:
+                    if target_id not in frame_ids_for_hist:
+                        log.warning(f"Scale changed too much compared to the last scale value ({prev_scale.item():0.4f} to {mean_scale.item():0.4f}). Tracking frame id {target_id}...")
+                        frame_ids_for_hist.append(target_id)
+
+                prev_scale = mean_scale
 
             # Save variables for histogram
             if target_id in frame_ids_for_hist:
@@ -241,7 +264,7 @@ def align_scale_for_image_pair(
             })
         reverse_flow = reverse_flow_output["flow"] # [N, 2, H, W]
 
-        # Occluded (respectively disoccluded) parts are False in the masks
+        # Occluded (respectively disoccluded) parts are False in the masks, we want the opposite
         occlusion_mask, disocclusion_mask = compute_occlusions(flow, reverse_flow)
         target_mask = target_mask | torch.logical_not(occlusion_mask)
 
@@ -289,9 +312,9 @@ def align_scale_for_image_pair(
 
     # Get mask of pixels to ignore in scale computation
     if target_mask is not None:
-        corr_mask = depth_corr < 0 # mask of pixels that left the view (no corresponding depths)
+        corr_mask = depth_corr <= 0 # mask of pixels that left the view (no corresponding depths)
         flow_mask = torch.linalg.norm(flow, dim=1, keepdim=True) <= min_flow
-        depth_mask = (target_depth < min_depth) | (target_depth > max_depth)
+        depth_mask = (target_depth <= min_depth) | (target_depth >= max_depth)
         ignore_mask = target_mask | source_mask | corr_mask | flow_mask | depth_mask
         mask = torch.logical_not(ignore_mask)
 

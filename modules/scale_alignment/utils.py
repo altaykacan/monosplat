@@ -42,12 +42,14 @@ def project_pcd_o3d(
 
 def centered_moving_average(array: np.ndarray, window_size: int) -> np.ndarray:
     """
-    Computes the centered moving average of a 1D numpy array.
-    Uses 'same' 1D convolutions so the arrays are mirrored on the boundaries.
+    Computes the centered moving average of a 1D numpy array. Uses padding to preserve the size.
 
     Parameters:
     - array: The input 1D array
     - window_size: The size of the moving window.
     """
-    moving_average = np.convolve(array, np.ones(window_size), "same") / window_size
+    pad_size = window_size // 2
+    padded_array = np.pad(array, pad_width=pad_size, mode='edge')
+    moving_average = np.convolve(padded_array, np.ones(window_size), "same") / window_size
+    moving_average = moving_average[pad_size:-pad_size]
     return moving_average
