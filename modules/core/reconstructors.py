@@ -12,7 +12,6 @@ from modules.core.models import RAFT, Metric3Dv2NormalModel, PrecomputedNormalMo
 from modules.core.utils import compute_occlusions, grow_bool_mask
 from modules.core.interfaces import BaseReconstructor, BaseModel, BaseBackprojector, BaseDataset
 from modules.depth.models import DepthModel
-from modules.io.datasets import DataCollator
 from modules.io.utils import Logger, clean_batch, save_image_torch
 from modules.segmentation.moving_objects import compute_dists
 from modules.segmentation.models import MaskRCNN, SegFormer
@@ -42,13 +41,29 @@ class SimpleReconstructor(BaseReconstructor):
 
         self.map = PointCloud()
         self.logger = Logger(self)
-        self.data_collator = DataCollator(self.use_every_nth)
         self.device = dataset.device
+
+    def parse_config(self, cfg: Dict):
+        self.output_dir = Path(cfg.get("output_dir", "."))
+        self.log_every_nth_batch = cfg.get("log_every_nth_batch", 50)
+        self.classes_to_remove = cfg.get("classes_to_remove", ["car"])
+        self.map_name = cfg.get("map_name", "cloud.ply")
+
+        self.use_every_nth = cfg.get("use_every_nth", 1)
+        self.batch_size = cfg.get("batch_size", 4)
+
+        self.clean_pointcloud = cfg.get("clean_pointcloud", False)
+        self.add_skydome = cfg.get("add_skydome", False)
+        self.init_cloud_path = cfg.get("init_cloud_path", None)
+        self.downsample_pointcloud_voxel_size = cfg.get("downsample_pointcloud_voxel_size", None)
 
     def run(self):
         batch_idx = 0
         batch = []
-        for i in range(0, len(self.dataset), self.use_every_nth):
+        # We don't use a PyTorch DataLoader because it doesn't support skipping samples
+        # We could create a dataset wrapper that has the skipped paths instead but
+        # custom batching seemed like a better idea
+        for i in tqdm(range(0, len(self.dataset), self.use_every_nth)):
             frame_id, image, pose = self.dataset[i]
             if len(batch) < self.batch_size:
                 batch.append((frame_id, image, pose))
@@ -56,8 +71,8 @@ class SimpleReconstructor(BaseReconstructor):
             # Do step if batch is full or if the next iteration would end the loop
             if (len(batch) >= self.batch_size) or ((i + self.use_every_nth) >= len(self.dataset)):
                 frame_ids = torch.stack([torch.tensor(el[0]) for el in batch], dim=0)
-                images = torch.stack([torch.tensor(el[1]) for el in batch], dim=0)
-                poses = torch.stack([torch.tensor(el[2]) for el in batch], dim=0)
+                images = torch.stack([el[1] for el in batch], dim=0)
+                poses = torch.stack([el[2] for el in batch], dim=0)
 
                 self.step(frame_ids, images, poses, batch_idx)
                 batch = []
@@ -65,9 +80,25 @@ class SimpleReconstructor(BaseReconstructor):
             else:
                 continue
 
+        # Converts it to Open3D PointCloud
         self.map.postprocess()
+
         if self.clean_pointcloud:
+            logging.info("Cleaning your point cloud...")
             self.map.clean()
+
+        if self.init_cloud_path is not None:
+            logging.info(f"The initial cloud at '{self.init_cloud_path}' to your point cloud...")
+            self.map.add_init_cloud(self.init_cloud_path)
+
+        if self.downsample_pointcloud_voxel_size is not None:
+            logging.info("Downsampling your point cloud...")
+            self.map.downsample(self.downsample_pointcloud_voxel_size, self.dataset.depth_scale)
+
+        # Skydome doesn't get influenced by the initial cloud we add
+        if self.add_skydome:
+            logging.info("Adding skydome to your point cloud...")
+            self.map.add_sky_dome()
 
         self.map.save(self.output_dir / Path(self.map_name))
 

@@ -35,9 +35,11 @@ class CustomDataset(BaseDataset):
             depth_dir: Union[Path, str] = None,
             scales_and_shifts_path: Union[Path, str] = None,
             depth_scale: float = None,
+            mask_dir: Union[Path, str] = None,
             start: int = None,
             end: int = -1,
             device: str = None,
+            padded_img_name_length: int = PADDED_IMG_NAME_LENGTH,
             ) -> None:
         self.image_dir = image_dir if isinstance(image_dir, Path) else Path(image_dir)
         self.pose_path = pose_path if isinstance(pose_path, Path) else Path(pose_path)
@@ -55,6 +57,13 @@ class CustomDataset(BaseDataset):
         else:
             self.depth_dir = depth_dir if isinstance(depth_dir, Path) else Path(depth_dir)
             self.has_depth = True
+
+        if mask_dir is None:
+            self.mask_dir = None
+            self.has_mask = False
+        else:
+            self.mask_dir = mask_dir if isinstance(mask_dir, Path) else Path(mask_dir)
+            self.has_mask = True
 
         self.pose_scale = pose_scale
         self.scales_and_shifts_path = scales_and_shifts_path
@@ -87,8 +96,9 @@ class CustomDataset(BaseDataset):
         self.depth_paths = [] # for precomputed depth
         self.scales = {} # for multiplying depth predictions, frame ids are the keys
         self.shifts = {} # for adding to depth, frame ids are the keys
-        self.normal_paths = [] # for precomputed normals
+        self.normal_paths = [] # for precomputed normals, TODO currently not used, can implement it
         self.normal_vis_paths = [] # for precomputed normal visualizations
+        self.mask_paths = [] # for precomputed masks
         self.poses = []
 
         self.start = start
@@ -100,6 +110,9 @@ class CustomDataset(BaseDataset):
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
         else:
             self.device = device
+
+        # Use value defined in configs/data.py if subclasses didn't overwrite it
+        self.PADDED_IMG_NAME_LENGTH = getattr(self, "PADDED_IMG_NAME_LENGTH", padded_img_name_length)
 
         if not self.image_dir.is_dir():
             raise FileNotFoundError(f"The image directory can't be found in {str(self.image_dir)}, please check your data!")
@@ -118,15 +131,18 @@ class CustomDataset(BaseDataset):
             self.load_depth_paths() # load in precomputed depth paths with scale and shifts if needed
             self.load_normals_from_depth_paths() # try loading in precomputed normals if they exist
 
+        if self.has_mask:
+            self.load_mask_paths() # load in precomputed mask paths
+
     def parse_image_path_and_frame_id(self, cols: List[str]) -> Tuple[Path, int]:
         frame_id = self.parse_frame_id(cols)
-        image_name = f"{frame_id:0{PADDED_IMG_NAME_LENGTH}}.png"
+        image_name = f"{frame_id:0{self.PADDED_IMG_NAME_LENGTH}}.png"
         image_path = Path(self.image_dir, image_name)
 
         return image_path, frame_id
 
     def get_depth_path_from_frame_id(self, depth_dir: Path, frame_id: int) -> Path:
-        depth_path = Path(depth_dir, f"{frame_id:0{PADDED_IMG_NAME_LENGTH}}.npy")
+        depth_path = Path(depth_dir, f"{frame_id:0{self.PADDED_IMG_NAME_LENGTH}}.npy")
         return depth_path
 
     def load_gt_depth_paths(self) -> None:
@@ -178,6 +194,15 @@ class CustomDataset(BaseDataset):
                 self.shifts[frame_id] = float(cols[3])
 
         return None
+
+    def load_mask_paths(self) -> None:
+        # Assuming masks have the exact same filename as the images + .png (can have double .png)
+        for p in self.image_paths:
+            mask_name = p.name + ".png"
+            self.mask_paths.append(self.mask_dir / mask_name)
+
+        if len(self.mask_paths) != len(self.image_paths):
+            raise ValueError(f"The number of read-in mask paths ({len(self.mask_paths)}) does not match the number of image paths ({len(self.image_paths)}), please check your data directory!")
 
     def load_normals_from_depth_paths(self) -> None:
         for p in self.depth_paths:
@@ -261,7 +286,7 @@ class CustomDataset(BaseDataset):
             image_path, frame_id = self.parse_image_path_and_frame_id(cols)
 
             # Saves a lot of time
-            if frame_id > self.end:
+            if self.end != -1 and frame_id > self.end:
                 break
 
             if not image_path.exists():
@@ -450,11 +475,13 @@ class KITTIDataset(CustomDataset):
             depth_dir: Union[Path, str] = None,
             scales_and_shifts_path: Union[Path, str] = None,
             depth_scale: float = None,
+            mask_dir: Path = None,
             start: int = None,
             end: int = -1
             ):
         # KITTI data has poses for every frame and no frame id in poses.txt, so we need to count it
         self.frame_counter = 0
+        self.PADDED_IMG_NAME_LENGTH = 6
         super().__init__(
             image_dir,
             pose_path,
@@ -466,13 +493,14 @@ class KITTIDataset(CustomDataset):
             depth_dir,
             scales_and_shifts_path,
             depth_scale,
-            start,
-            end,
+            mask_dir=mask_dir,
+            start=start,
+            end=end,
             )
 
     def parse_image_path_and_frame_id(self, cols: List[str]) -> Tuple[Path, int]:
         frame_id = self.frame_counter
-        image_name = f"{frame_id:0{PADDED_IMG_NAME_LENGTH}}.png"
+        image_name = f"{frame_id:0{self.PADDED_IMG_NAME_LENGTH}}.png"
         image_path = Path(self.image_dir, image_name)
 
         self.frame_counter += 1
@@ -512,12 +540,14 @@ class KITTI360Dataset(CustomDataset):
             pose_scale: float = 1.0,
             target_size: Tuple = (),
             depth_dir: Path = None,
+            mask_dir: Path = None,
             start: int = None,
             end: int = -1
             ) -> None:
         # KITTI360 specific preparation before calling the constructor of the super class
         self.seq = seq
         self.cam_id = cam_id
+        self.PADDED_IMG_NAME_LENGTH = 10
 
         sequence = '2013_05_28_drive_%04d_sync'%seq
         image_dir = Path(KITTI360_DIR, "data_2d_raw", sequence, f"image_0{cam_id}", "data_rect")
@@ -541,7 +571,7 @@ class KITTI360Dataset(CustomDataset):
 
         if not gt_depth_dir_exists or gt_depth_dir_is_empty:
             log.info(f"The ground truth depth files for KITTI360 at {gt_depth_dir} do not exist. Reading and saving all values for {sequence} in that directory. This might take a while...")
-            projectVeloToImage(cam_id, seq, KITTI360_DIR, max_d=200, image_name_padding=PADDED_IMG_NAME_LENGTH)
+            projectVeloToImage(cam_id, seq, KITTI360_DIR, max_d=200, image_name_padding=self.PADDED_IMG_NAME_LENGTH)
 
         # Call to constructor of CustomDataset, sets most attributes
         super().__init__(
@@ -553,6 +583,7 @@ class KITTI360Dataset(CustomDataset):
             target_size,
             gt_depth_dir,
             depth_dir,
+            mask_dir=mask_dir,
             start=start,
             end=end
             )
@@ -601,8 +632,10 @@ class ColmapDataset(CustomDataset):
             depth_dir: Union[Path, str] = None,
             scales_and_shifts_path: Union[Path, str] = None,
             depth_scale: float = None,
+            mask_dir: Path = None,
             start: int = None,
-            end: int = -1
+            end: int = -1,
+            padded_img_name_length: int = PADDED_IMG_NAME_LENGTH,
             ) -> None:
         image_dir = Path(colmap_dir) / Path("../../data/rgb")
         self.data_dir = Path(colmap_dir) / Path("sparse/0")
@@ -628,8 +661,10 @@ class ColmapDataset(CustomDataset):
             depth_dir,
             scales_and_shifts_path=scales_and_shifts_path,
             depth_scale=depth_scale,
+            mask_dir=mask_dir,
             start=start,
-            end=end
+            end=end,
+            padded_img_name_length= padded_img_name_length,
             )
 
     def load_colmap_map(self, points_txt: Path):
@@ -648,7 +683,7 @@ class ColmapDataset(CustomDataset):
             o3d.io.write_point_cloud(str(out_path), self.pcd.to_legacy())
 
     @classmethod
-    def read_colmap_pcd_o3d(cls, points_txt_path: Path):
+    def read_colmap_pcd_o3d(cls, points_txt_path: Path, convert_to_float32: bool = False):
         pcd = o3d.t.geometry.PointCloud()
         xyz = []
         rgb = []
@@ -670,9 +705,13 @@ class ColmapDataset(CustomDataset):
 
         pcd.point.positions = np.array(xyz)
         pcd.point.colors = np.array(rgb)
+        pcd.point.normals = np.zeros_like(xyz) # no normal information intially
+
+        # Open3D's project to depth function needs float32
+        if convert_to_float32:
+            pcd.point.positions = pcd.point.positions.to(o3d.core.Dtype.Float32)
+
         return pcd
-
-
 
     @classmethod
     def parse_frame_id(cls, cols: List[str]) -> int:
@@ -825,6 +864,7 @@ class CombinedColmapDataset(ColmapDataset):
             depth_dir: Union[Path, str] = None,
             scales_and_shifts_path: Union[Path, str] = None,
             depth_scale: float = None,
+            mask_dir: Path = None,
             start: int = None,
             end: int = -1
             ) -> None:
@@ -838,8 +878,9 @@ class CombinedColmapDataset(ColmapDataset):
             depth_dir,
             scales_and_shifts_path,
             depth_scale,
-            start,
-            end
+            mask_dir=mask_dir,
+            start=start,
+            end=end,
         )
 
         # Keys are video ids as strings, values are lists of integer frame ids

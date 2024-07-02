@@ -1,9 +1,12 @@
 from typing import Dict
 
 import torch
+from torchvision.transforms.functional import pil_to_tensor
+import numpy as np
+from PIL import Image
 
-from ..core.interfaces import BaseModel
-from .utils import mmseg_get_class_ids
+from modules.core.interfaces import BaseModel, BaseDataset
+from modules.segmentation.utils import mmseg_get_class_ids
 
 try:
     from torchvision.models.detection import  maskrcnn_resnet50_fpn, MaskRCNN_ResNet50_FPN_Weights
@@ -158,6 +161,55 @@ class MaskRCNN(InstanceSegmentationModel):
 class FPN(SegmentationModel):
     def __init__(self, cfg: Dict):
         pass
+
+class PrecomputedSegModel(SegmentationModel):
+    """
+    Segmentation model to load in precomputed segmentation masks.
+
+    Expected inputs and outputs:
+    `intput_dict`: `{"frame_ids": List[int]}`
+    `output_dict`: `{"masks_dict": dictionary of (N, 1, H, W) torch tensors with only a single key that has the combined map.}`
+    """
+    def __init__(self, dataset: BaseDataset, device: str = None):
+        self._dataset = dataset
+        if device is None:
+            self._device ="cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            self._device = device
+
+    def load(self):
+        pass
+
+    def unload(self):
+        pass
+
+    def _preprocess(self, input_dict: Dict) -> Dict:
+        return input_dict
+
+    def _predict(self, input_dict: Dict) -> Dict:
+        frame_ids = input_dict["frame_ids"]
+        masks = []
+
+        # Form the batch one by one
+        for frame_id in frame_ids:
+            idx = self._dataset.frame_ids.index(frame_id)
+            mask_path = self._dataset.mask_paths[idx]
+
+            # Need it as float to be able to resize
+            mask = pil_to_tensor(Image.open(mask_path)).float() # [1, H, W]
+
+            # Resize and crop the mask according to the target_size of dataset
+            if self._dataset.size != self._dataset.orig_size:
+                mask = self._dataset.preprocess(mask) # [1, H_new, W_new]
+                mask = mask > 0 # gets it back to a boolean tensor
+
+            # We save the inverse of the actual segmentation masks on disk for COLMAP
+            mask = torch.logical_not(mask)
+
+            masks.append(mask)
+
+        masks = torch.stack(masks, dim=0).to(self._device) # [N, 1, H_new, W_new]
+        return {"masks_dict": {"all": masks}}
 
 
 class SegFormer(SegmentationModel):

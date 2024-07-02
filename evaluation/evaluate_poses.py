@@ -16,6 +16,7 @@ from tqdm import tqdm
 
 from modules.pose.alignment import umeyama_alignment
 from modules.pose.visualization import save_traj, save_rpe_plot
+from modules.pose.utils import get_transformation_matrix
 from modules.eval.utils import round_results, get_pose_matches
 from modules.eval.metrics import compute_ate, compute_rpe
 from modules.eval.tum_rgbd_tools.evaluate_ate import align
@@ -38,6 +39,7 @@ def main(args):
     log_path = output_dir.absolute() / Path("log.txt")
     output_dir.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(filename=log_path, level=logging.INFO, format='%(levelname)s - %(message)s')
+    logging.getLogger().addHandler(logging.StreamHandler())
     logging.info(f"Arguments: \n{json.dumps(vars(args), indent=4)}")
 
     # Nested dictionary to store results, keys are metrics with dictionaries for sequences
@@ -53,6 +55,9 @@ def main(args):
 
     # Iterate over the multiple pose files
     for i, pose_path in enumerate(tqdm(pose_paths)):
+        if not ("images.txt" == pose_path.name) and not ("Trajectory" in pose_path.name) and not ("pose" in pose_path.name):
+            logging.info(f"Skipping file {pose_path.name} as it is not recognized as a pose file...")
+            continue
         logging.info(f"Processing pose file {pose_path.name}")
 
         # Get timestamps for which we have predicted poses
@@ -71,6 +76,9 @@ def main(args):
         rot, t, s = umeyama_alignment(traj_m, ref_traj_m, align_scale)
         rot_tum, t_tum, trans_error_tum = align(traj_m.numpy(), ref_traj_m.numpy())
 
+
+        T =  get_transformation_matrix(rot, t)
+        logging.info(f"The computed coordinate frame alignment transformation is:\n{T.numpy()}")
         if align_scale:
             logging.info(f"Computed scale factor to multiply the predicted poses with {s}")
 
@@ -141,6 +149,13 @@ def main(args):
                         stamps_rpe,
                         filename=f"{pose_path.stem}_6_rpe_plot.png",
                         output_dir=output_dir,
+        )
+
+        save_traj([traj_m],
+                    labels=["raw preds"],
+                    filename=f"{pose_path.stem}_7_raw_pose.png",
+                    output_dir=output_dir,
+                    show_diff=False,
         )
 
     # Average over the means and rmse values of different sequences

@@ -23,7 +23,7 @@ class PointCloud(BaseMap):
     Points mapped to `[0,0,0]` are ignored.
     """
     def __init__(self, scale: float = 1.0):
-        self.xyz = None
+        self.xyz = None # all saved as [3, num_points] tensors
         self.rgb = None
         self.normals = None
         self.is_road = None
@@ -108,10 +108,9 @@ class PointCloud(BaseMap):
         return None
 
     def postprocess(self):
-        # Convert to open3d cloud, open3d expects [N, 3] numpy arrays
+        # Convert to open3d cloud, open3d expects [N, 3] numpy arrays but we have [3, N]
         pcd = o3d.t.geometry.PointCloud()
         pcd.point.positions = self.xyz.permute(1, 0).cpu().numpy()
-        del self.xyz # free up RAM
         if self.has_rgb:
             # open3d wants normalized float rgb values
             if self.rgb.dtype == torch.uint8:
@@ -119,28 +118,133 @@ class PointCloud(BaseMap):
                 self.rgb = self.rgb / 255
             pcd.point.colors = self.rgb.permute(1, 0).cpu().numpy()
 
-            del self.rgb
-
         if self.has_normals:
             pcd.point.normals = self.normals.float().permute(1, 0).cpu().numpy()
-            del self.normals
 
         if self.has_road_flag:
             pcd.point.is_road = self.is_road.permute(1, 0).int().cpu().numpy()
 
         self.pcd = pcd
 
-    def clean(self, num_neighbors: int = 20, std_deviation: float = 2.0, remember_init_cloud: bool = False):
+    def add_sky_dome(
+        self,
+        num_points: int = 50000,
+        radius_factor: float = 1.0,
+        color: tuple = (173, 216, 230),
+        ):
+        """
+        Adds a hemisphere around the input dense point cloud `pcd_in`. The center is
+        computed to be the mean of all the coordinates and the radius is half of
+        the largest distance of the minimum and maximum coordinates. The
+        radius gets scaled by `radius_factor`.
+
+        The uniform points are generated per the last method in this page, i.e.
+        by generating 3 normally distributed variables and normalizing them:
+        https://mathworld.wolfram.com/SpherePointPicking.html
+
+        Since we are sampling around a hemisphere, double the amount of points
+        specified are sampled and the points outside of the hemisphere are discarded.
+        """
+        if getattr(self, "pcd") is None:
+            raise RuntimeError("You need to first run 'PointCloud.postprocess()' before adding the skydome!")
+        device = self.xyz.device
+
+        # Uses self.xyz which does not get changed when we add the initial SfM cloud
+        max_coords, _ = torch.max(self.xyz, dim=1, keepdim=True)  # [3, 1]
+        min_coords, _ = torch.min(self.xyz, dim=1, keepdim=True)  # [3, 1]
+
+        center = torch.mean(self.xyz, dim=1, keepdim=True).to(device)  # [3, 1]
+
+        radius = torch.max(torch.abs(max_coords - min_coords)).to(device) # scalar
+        radius *= radius_factor
+
+        # Times two because we will discard (roughly) half of the generated points
+        coords = torch.randn(3, 2 * num_points).to(device)
+        coords /= torch.linalg.norm(coords, dim=0, keepdim=True) # normalize each point
+
+        # Shifting the unit sphere to the cloud center and scaling the radius
+        coords = center + radius * coords  # [3, num_kept_points], point coordinates
+
+        # Only take the points from the dome with y coordinates below maximum y (y points down, in gravity direction)
+        y_max = self.xyz[1, :].max()
+        valid_points = (coords[1, :] < (1.5 * y_max))
+        coords = coords[:, valid_points] # keep the valid rows
+        num_kept_points = coords.shape[1]
+
+        # Data type has to be float rgb values for open3d
+        dome_rgbs = torch.ones((1, num_kept_points), dtype=torch.uint8) * torch.tensor(color, dtype=torch.uint8).view(3, 1)
+        dome_rgbs = dome_rgbs.float() / 255
+
+        skydome = o3d.t.geometry.PointCloud()
+        skydome.point.positions = coords.permute(1, 0).cpu().numpy()
+        skydome.point.colors = dome_rgbs.permute(1, 0).cpu().numpy()
+
+        # Need to add dummy normals otherwise we can't merge the pointclouds
+        if self.has_normals:
+            skydome.point.normals = np.zeros_like(coords.permute(1, 0).float().cpu().numpy())
+
+        self.pcd = self.pcd + skydome # open3d 18.0 allows concatenating pointclouds like this
+
+    def add_init_cloud(self, init_ply_path: Union[str, Path]) -> None:
+        """
+        Adds an initial point cloud *without* scaling to the existing point cloud.
+        This means that the initial cloud and the current cloud is expected
+        to have the same scale (if the initial cloud has the same scale as your
+        poses this means your `pose_scale` should be 1 and you should set a
+        `depth_scale`)
+        """
+        init_cloud = o3d.t.io.read_point_cloud(str(init_ply_path))
+
+        # We save positions as float64
+        if init_cloud.point.positions.dtype == o3d.core.Dtype.Float32:
+            init_cloud.point.positions = init_cloud.point.positions.to(o3d.core.Dtype.Float64)
+
+        # We have colors as float32 values between 0 and 1
+        if init_cloud.point.colors.dtype == o3d.core.Dtype.UInt8:
+            init_cloud.point.colors = init_cloud.point.colors.to(o3d.core.Dtype.Float32) / 255.0
+
+        # Need to make sure we have the right attributes otherwise we can't concat
+        xyz = np.asarray(init_cloud.point.positions.to(o3d.core.Dtype.Float32)) # we need float32 for colors and normals
+        if init_cloud.point.normals is None:
+            init_cloud.point.normals = np.zeros_like(xyz)
+        if init_cloud.point.colors is None:
+            init_cloud.point.colors = np.zeros_like(xyz)
+
+        self.pcd = self.pcd + init_cloud # open3d 18.0 allows concatenating pointclouds like this
+
+    def downsample(self, voxel_size: float = 0.05, depth_scale: float = None, remember_init_cloud: bool = False) -> None:
+        """
+        Downsamples the open3D point cloud that is created after running `postprocess()`
+        using voxel downsampling. Optionally saves the point cloud before
+        downsampling.
+        """
+        if getattr(self, "pcd") is None:
+            raise RuntimeError("You need to first run 'PointCloud.postprocess()' before downsampling!")
+
+        init_num_points = len(self.pcd.point.positions)
+        # To convert metric scale to up-to-scale pose's scale
+        if depth_scale is not None:
+            scaled_voxel_size = voxel_size * depth_scale
+
+        if remember_init_cloud:
+            self.pcd_before_downsample = self.pcd
+
+        self.pcd = self.pcd.voxel_down_sample(voxel_size=scaled_voxel_size)
+        downsampled_num_points = len(self.pcd.point.positions)
+
+        log.info(f"Reduced {init_num_points} points to {downsampled_num_points} after downsampling with a voxel size of: {voxel_size} (scaled size: {scaled_voxel_size:0.5f})")
+
+    def clean(self, num_neighbors: int = 20, std_deviation: float = 2.0, remember_init_cloud: bool = False) -> None:
         """
         Cleans the open3D point cloud that is created after running `postprocess()`
         using statistical outlier removal. Optionally saves the point cloud before
         cleaning.
         """
-        if self.pcd is None:
+        if getattr(self, "pcd") is None:
             raise RuntimeError("You need to first run 'PointCloud.postprocess()' before cleaning your map!")
 
         if remember_init_cloud:
-            self.prev_pcd = self.pcd # remember cloud before cleaning, useful for debugging
+            self.pcd_before_clean = self.pcd # remember cloud before cleaning, useful for debugging
         self.pcd, _ = self.pcd.remove_statistical_outliers(num_neighbors, std_deviation)
 
     def save(self, filename: Union[Path, str] = "map.ply", output_dir: Union[Path, str] = "."):
@@ -154,4 +258,4 @@ class PointCloud(BaseMap):
 
         file_path = str(output_dir / filename) # open3d needs paths as strings
         o3d.io.write_point_cloud(file_path, self.pcd.to_legacy())
-        log.info(f"Wrote point cloud to disk at {file_path} with {len(self.pcd.point)} points!")
+        log.info(f"Wrote point cloud to disk at {file_path} with {len(self.pcd.point.positions)} points!")

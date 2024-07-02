@@ -15,28 +15,28 @@ from modules.depth.models import PrecomputedDepthModel, KITTI360DepthModel
 from modules.eval.utils import compute_mean_recursive
 from modules.io.datasets import CombinedColmapDataset, KITTI360Dataset
 from modules.io.utils import save_image_torch
-from modules.segmentation.models import SegFormer
+from modules.segmentation.models import SegFormer, PrecomputedSegModel
 from modules.segmentation.utils import combine_segmentation_masks
 from modules.scale_alignment.visualization import save_histogram, save_scale_plot, plot_dense_alignment_results
 
 
 log = logging.getLogger(__name__)
 
-# TODO implement
 def do_dense_alignment(
     dataset: BaseDataset,
     flow_steps: List[int],
-    t_z_thresh: float = 0.1,
+    t_z_thresh: float = 0.5,
     min_d: float = 0.0,
     max_d: float = 50.0,
     min_flow: float = 0.2,
     mask_moveable_objects: bool = True,
+    seg_model_type: str = "predict",
     mask_occlusions: bool = True,
     log_dir: Path = Path("./alignment_plots"),
     frame_idx_for_hist: int = 8,
     log_every: int = 50,
     debug: bool = False,
-    kitti360_depth_type: str = "gt"
+    depth_type: str = "gt",
     ) -> Dict:
     """
     Does dense scale alignment for each pair of images for multiple flow steps.
@@ -80,17 +80,23 @@ def do_dense_alignment(
     scales = {}
     frame_scales_for_hist = {}
     scale_tensors_to_plot = {}
+    tz_to_plot = {}
+    std_to_plot = {}
     if debug:
         frame_ids_for_hist = [dataset.frame_ids[i] for i in [frame_idx_for_hist, 0, len(dataset) // 8, len(dataset) // 4]]
     else:
         frame_ids_for_hist = [dataset.frame_ids[i] for i in [frame_idx_for_hist, 0, len(dataset) // 4, len(dataset) // 2, - (len(dataset) // 4)]]
     flow_model = RAFT()
 
-    if isinstance(dataset, KITTI360Dataset) and kitti360_depth_type == "gt":
+    if isinstance(dataset, KITTI360Dataset) and depth_type == "gt":
         depth_model = KITTI360DepthModel(dataset)
     else:
         depth_model = PrecomputedDepthModel(dataset)
-    if mask_moveable_objects:
+
+    if mask_moveable_objects and seg_model_type == "precomputed":
+        seg_model = PrecomputedSegModel(dataset)
+        seg_classes = [] # just reads in the already computed masks
+    elif mask_moveable_objects and seg_model_type == "predict":
         seg_model = SegFormer()
         seg_classes = ["car", "bus", "person", "truck", "bicycle", "motorcycle", "rider"]
 
@@ -103,6 +109,8 @@ def do_dense_alignment(
         scales[flow_step] = {}
         frame_scales_for_hist[flow_step] = {} # for visualization
         scale_tensors_to_plot[flow_step] = {}
+        tz_to_plot[flow_step] = {}
+        std_to_plot[flow_step] = {}
         prev_scale = None # to catch outliers
 
         # TODO do this in a batched manner to speed up a lot (low prio)
@@ -131,7 +139,8 @@ def do_dense_alignment(
             if mask_moveable_objects:
                 seg_pred = seg_model.predict({
                     "images": torch.stack((target_image, source_image), dim=0),
-                    "classes_to_segment": seg_classes
+                    "classes_to_segment": seg_classes,
+                    "frame_ids": [target_id, source_id]
                     })
                 seg_masks = combine_segmentation_masks(seg_pred["masks_dict"], seg_classes)
                 target_mask = seg_masks[0].unsqueeze(0) # [1, 1, H, W]
@@ -175,25 +184,28 @@ def do_dense_alignment(
                                             )
 
             if i % log_every == 0:
-                log.info(f"Computed forward scale {curr_scale.mean().item()} and backwards scale {curr_scale_rev.mean().item()} for images {target_id}-{source_id}, t_z: {t_z.item():0.4f}, scaled t_z: {curr_scale.mean().item() * t_z.item():0.4f}.")
+                log.info(f"Computed forward scale {curr_scale.mean().item():0.4f} and backwards scale {curr_scale_rev.mean().item():0.4f} for images {target_id}-{source_id}, t_z: {t_z.item():0.4f}, scaled t_z: {curr_scale.mean().item() * t_z.item():0.4f}.")
 
+            tz_to_plot[flow_step][target_id] = torch.abs(t_z).item()
+            std_to_plot[flow_step][target_id] = (torch.std(curr_scale) + torch.std(curr_scale_rev)).mean().item()
             mean_scale = (curr_scale.mean() + curr_scale_rev.mean()).item() / 2
+
             if torch.abs(mean_scale * t_z) <= t_z_thresh:
-                log.warning(f"Scaled up t_z value is less than the threshold ({torch.abs(mean_scale * t_z)} < {t_z_thresh}). Skipping images {target_id}-{source_id}")
-                continue
-            elif torch.abs(t_z) <= 0.2:
-                log.warning(f"Computed t_z value is less than the threshold ({torch.abs(t_z)} < {0.2}). Skipping images {target_id}-{source_id}")
-                continue
+                log.warning(f"Scaled up t_z value is less than the threshold ({torch.abs(mean_scale * t_z):0.4f} < {t_z_thresh}). Skipping images {target_id}-{source_id}")
+                pass
+            elif torch.abs(t_z) <= 0.001:
+                log.warning(f"Computed t_z value is less than the threshold ({torch.abs(t_z):0.4f} < {0.2}). Skipping images {target_id}-{source_id}")
+                pass
             else:
                 scales[flow_step][target_id] = mean_scale
 
-                # If scale increased a lot we start tracking the frame id for detailed plots
-                if (prev_scale is not None) and abs(prev_scale - mean_scale) / prev_scale > 1.5:
-                    if target_id not in frame_ids_for_hist:
-                        log.warning(f"Scale changed too much compared to the last scale value ({prev_scale.item():0.4f} to {mean_scale.item():0.4f}). Tracking frame id {target_id}...")
-                        frame_ids_for_hist.append(target_id)
+                # # If scale increased a lot we start tracking the frame id for detailed plots
+                # if (prev_scale is not None) and abs(prev_scale - mean_scale) / prev_scale > 1.5:
+                #     if target_id not in frame_ids_for_hist:
+                #         log.warning(f"Scale changed too much compared to the last scale value ({prev_scale.item():0.4f} to {mean_scale.item():0.4f}). Tracking frame id {target_id}...")
+                #         frame_ids_for_hist.append(target_id)
 
-                prev_scale = mean_scale
+                # prev_scale = mean_scale
 
             # Save variables for histogram
             if target_id in frame_ids_for_hist:
@@ -204,18 +216,26 @@ def do_dense_alignment(
                 log.warning(f"Debug mode is active, stopping dense alignment early at frame {target_id} for flow step {flow_step}")
                 break
 
+        # Save the mean of the scales to log
+        mean_of_means = torch.tensor(list(scales[flow_step].values())).mean()
+        log.info("===============")
+        log.info(f"FINISHED FLOW STEP {flow_step}, MEAN OF CLEANED SCALES: {mean_of_means:0.4f}")
+        log.info("===============")
+
     plot_dense_alignment_results(
         scales,
         frame_ids_for_hist,
         frame_scales_for_hist,
         scale_tensors_to_plot,
+        tz_to_plot,
+        std_to_plot,
         log_dir,
         dataset,
         )
 
     # Average over all flow steps, all frames, and both forward backward methods
     final_scale = compute_mean_recursive(scales)
-    log.info(f"Final computed scale value to multiply the poses with: {final_scale} (or multiply the depths with {1/final_scale})")
+    log.info(f"Final computed scale value to multiply the poses with: {final_scale:0.4f} (or multiply the depths with {1/final_scale:0.4f})")
 
     return 1 / final_scale
 

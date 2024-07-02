@@ -176,13 +176,11 @@ def compute_chamfer_distance_pcd(accuracy: float, completion: float) -> float:
 def compute_precision_pcd(pred_to_ref_dists: torch.Tensor, thresh: float = 0.05) -> float:
     """
     Computes the precision metric for point cloud reconstruction evaluation
-    using open3D. It computes the mean distance from points in `pred_pcd` to
-    the closest point in `ref_pcd` for all point pairs that have a distance
-    less than `thresh`. In the literature this value is set to be 5cm.
+    using open3D.
     """
     dists = pred_to_ref_dists
-    valid_dists = dists < thresh
-    prec = len(valid_dists) / len(dists)
+    valid_dists = (dists < thresh).sum().item()
+    prec = valid_dists / len(dists)
     return prec
 
 
@@ -193,8 +191,8 @@ def compute_recall_pcd(ref_to_pred_dists: torch.Tensor, thresh: float = 0.05) ->
     is the other way around.
     """
     dists = ref_to_pred_dists
-    valid_dists = dists < thresh
-    recall = len(valid_dists) / len(dists)
+    valid_dists = (dists < thresh).sum().item()
+    recall = valid_dists / len(dists)
     return recall
 
 

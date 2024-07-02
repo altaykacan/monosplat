@@ -8,7 +8,6 @@ from modules.depth.models import Metric3Dv2, PrecomputedDepthModel
 from modules.core.backprojection import Backprojector
 from modules.core.reconstructors import SimpleReconstructor
 
-
 # KITTI sequence 7 test
 # image_dir = "/usr/stud/kaa/thesis/Toolbox-Draft/data/kitti/images"
 # pose_file = "/usr/stud/kaa/thesis/Toolbox-Draft/data/kitti/poses_07.txt"
@@ -35,10 +34,10 @@ target_size = [576, 1024]
 depth_dir = "/usr/stud/kaa/data/root/ds01/data/depths/arrays"
 dataset = ColmapDataset(colmap_dir, 1.0, orig_intrinsics, target_size=target_size, depth_dir=depth_dir,  depth_scale=1 / pose_scale, end=50)
 
-depth_model = Metric3Dv2(dataset.intrinsics, backbone="vit_giant")
-# depth_model = PrecomputedDepthModel(dataset)
+# depth_model = Metric3Dv2(dataset.intrinsics, backbone="vit_giant")
+depth_model = PrecomputedDepthModel(dataset)
 backprojector = Backprojector(cfg={"dropout":0.8}, intrinsics=dataset.intrinsics)
-recon = SimpleReconstructor(dataset, backprojector, depth_model, cfg={"batch_size": 4, "output_dir": "tests/test_results/debug"})
+recon = SimpleReconstructor(dataset, backprojector, depth_model, cfg={"batch_size": 4, "output_dir": "tests/test_results/debug", "use_every_nth":10})
 recon.run()
 
 print("done!")

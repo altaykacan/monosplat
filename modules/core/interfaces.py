@@ -98,21 +98,15 @@ class BaseReconstructor(ABC):
         """One step of the reconstruction process. Specific to reconstructors"""
         pass
 
+    @abstractmethod
     def parse_config(self, cfg: Dict):
         """
         Parses the configuration dictionary for each reconstructor and sets
         the corresponding attributes of the reconstructor. Each reconstructor
-        can define it's own `parse_config()` method. Common attributes are
-        parsed and set in the interface definition `BaseReconstructor`
+        can define it's own `parse_config()` method.
         """
-        self.output_dir = Path(cfg.get("output_dir", "."))
-        self.log_every_nth_batch = cfg.get("log_every_nth_batch", 50)
-        self.clean_pointcloud = cfg.get("clean_pointcloud", False)
-        self.classes_to_remove = cfg.get("classes_to_remove", ["car"])
-        self.map_name = cfg.get("map_name", "cloud.ply")
+        pass
 
-        self.use_every_nth = cfg.get("use_every_nth", 1)
-        self.batch_size = cfg.get("batch_size", 4)
 
 class BaseBackprojector(ABC):
     @abstractmethod

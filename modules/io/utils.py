@@ -11,7 +11,7 @@ import torch
 import numpy as np
 import open3d as o3d
 import matplotlib.pyplot as plt
-from plyfile import PlyData
+from plyfile import PlyData, PlyElement
 
 from configs.data import SUPPORTED_DATASETS
 from modules.core.maps import PointCloud
@@ -162,10 +162,13 @@ def find_latest_number_in_dir(dir_path: Union[str, Path]) -> int:
         if path_str[0] == ".":
             continue
 
-        # Expecting xx_some_directory_name as a naming convention where xx is a number
-        idx = int(path_str.split("_")[0])
-        if idx > largest_idx:
-            largest_idx = idx
+        try:
+            # Expecting xx_some_directory_name as a naming convention where xx is a number
+            idx = int(path_str.split("_")[0])
+            if idx > largest_idx:
+                largest_idx = idx
+        except ValueError:
+            log.warning(f"Couldn't parse '{path_str}', not counting it when enumarating the files in '{str(dir_path)}'")
 
     return largest_idx
 
@@ -201,14 +204,19 @@ def get_parse_and_stamp_fn(dataset: str) -> Tuple[Callable, Callable]:
     """
     if dataset == "custom":
         dataset_class = CustomDataset
+        log.info(f"Using a CustomDataset for extracting frame ids and poses...")
     elif dataset == "kitti360":
         dataset_class = KITTI360Dataset
+        log.info(f"Using a KITTI360Dataset for extracting frame ids and poses...")
     elif dataset == "kitti":
         dataset_class = KITTIDataset
+        log.info(f"Using a KITTIDataset for extracting frame ids and poses...")
     elif dataset == "tum_rgbd":
         dataset_class = TUMRGBDDataset
+        log.info(f"Using a TUMRGBDDataset for extracting frame ids and poses...")
     elif dataset  == "colmap":
         dataset_class = ColmapDataset
+        log.info(f"Using a ColmapDataset for extracting frame ids and poses...")
     elif dataset not in SUPPORTED_DATASETS:
         raise NotImplementedError(f"The dataset you specified ({dataset}) is not supported yet, supported datasets are: {str(SUPPORTED_DATASETS)}")
     else:
@@ -250,6 +258,10 @@ def read_all_poses_and_stamps(pose_path: Union[Path, str], dataset: str = "custo
             stamp = stamp_fn(cols) # returns None if the dataset doesn't support timestamps in pose file
             poses.append(pose)
             stamps.append(stamp)
+
+    # Means that all are None and dataset doesn't have timestamps in the pose file
+    if stamps[0] is None:
+        stamps = [s for s in range(len(stamps))]
 
     # Sort the poses and stamps in increasing order
     zipped = sorted(zip(stamps, poses))
@@ -439,6 +451,7 @@ def create_scales_and_shifts_txt(
             file.write(f"{depth_paths[i]} {stamps[i]} {scales[i].item()} {shifts[i].item()}\n")
     log.info(f"Wrote scales_and_shifts.txt")
 
+
 def create_intrinsics_txt(out_dir: Path, dataset: BaseDataset) -> None:
     """
     Writes `intrinsics.txt` to `out_dir`, for use with 3d gaussian splatting
@@ -449,13 +462,17 @@ def create_intrinsics_txt(out_dir: Path, dataset: BaseDataset) -> None:
     fx, fy, cx, cy = dataset.intrinsics
     first_frame_id = dataset.frame_ids[0]
 
+    # Save pose scale if it's not the default value
     if dataset.pose_scale != 1.0:
-        scale = dataset.pose_scale # use pose scale if it's not the default value
-    elif (dataset.scales == dataset.scales[first_frame_id]).all():
-        scale = 1 / dataset.scales[first_frame_id].item() # if all depth scales are the same use its reciprocal
+        scale = dataset.pose_scale
+    elif dataset.depth_scale is None and dataset.scales_and_shifts_path is None:
+        scale = dataset.pose_scale
+    # If all depth scales are the same, use it's reciprocal to save as pose scale
+    elif (torch.tensor(list(dataset.scales.values())) == dataset.scales[first_frame_id]).all():
+        scale = 1 / dataset.scales[first_frame_id]
     else:
         # TODO add support for scale and shift factor reading in 3dgs (probably can save the scaled and shifted arrays on disk) (low prio)
-        scale = -1 # else we must use per-depth scale and shift factors from scales_and_shifts.txt in the 3dgs code in the 3dgs code
+        scale = -1 # else we must use per-depth scale and shift factors from scales_and_shifts.txt in the 3dgs code
 
     with open(out_path, "w") as file:
         file.write("# Camera list with one line of data per camera, -1 values mean they are ignored: \n")
@@ -470,17 +487,17 @@ def create_intrinsics_txt(out_dir: Path, dataset: BaseDataset) -> None:
 def create_poses_for_3dgs(out_dir: Path, dataset: BaseDataset) -> None:
     """
     Creates either `colmap_poses.txt` or `poses.txt` for running 3D gaussian
-    splatting depending on the dataset you provide
+    splatting depending on the dataset you provide. Saves unscaled poses.
     """
 
     if isinstance(dataset, (ColmapDataset, CombinedColmapDataset)):
-        log.info(f"Found COLMAP-based dataset, saving 'colmap_poses.txt' at {str(out_dir)}")
+        log.info(f"Found COLMAP-based dataset, saving unscaled poses 'colmap_poses.txt' at {str(out_dir)}")
         colmap_pose_path = dataset.pose_path
         out_path = out_dir / Path("colmap_poses.txt")
         shutil.copy(colmap_pose_path, out_path)
 
     else:
-        log.info(f"Found a custom dataset, saving 'poses.txt' at {str(out_dir)}")
+        log.info(f"Found a custom dataset, saving unscaled poses 'poses.txt' at {str(out_dir)}")
         slam_pose_path = dataset.pose_path
         out_path = out_dir / Path("poses.txt")
         shutil.copy(slam_pose_path, out_path)
@@ -583,34 +600,25 @@ def save_poses_as_ply(poses: List[torch.Tensor], scale: float = 1.0, filename: U
     )
 
 
-def read_ply(path: Union[str, Path]) -> Tuple[torch.Tensor, torch.Tensor]:
+def read_ply(path) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    Reads in a .ply file using PlyReader describing a point cloud and returns
-    two torch tensors, one for the xyz coordinates of the points and the other
-    for the RGB values.
+    Reads a ply file and reads in positions, colors, and normals.
+
+    Slightly modified from the original 3D Gaussian Splatting repo:
+    https://github.com/graphdeco-inria/gaussian-splatting/blob/main/scene/dataset_readers.py
     """
-    if isinstance(path, str):
-        path = Path(path)
+    plydata = PlyData.read(path)
+    vertices = plydata['vertex']
+    positions = np.vstack([vertices['x'], vertices['y'], vertices['z']]).T
+    colors = np.vstack([vertices['red'], vertices['green'], vertices['blue']]).T / 255.0
 
-    with open(path, "rb") as f:
-        plydata = PlyData.read(f)  # read as a PlyData object
+    try:
+        normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
+    except Exception as E:
+        log.warning(f"Encountered exception '{E}' when trying to read in normals. Setting them all as zeros")
+        normals = np.zeros_like(positions)
 
-    # plydata.elements is a tuple and contains a memory-mapped array
-    data = np.array(plydata.elements[0].data)
-
-    # Each row of data is a structured data type transpose to have each row as a point
-    xyz = np.array([data["x"], data["y"], data["z"]], dtype=np.float64).T
-    rgb = np.array([data["red"], data["green"], data["blue"]], dtype=np.uint8).T
-
-    num_points = xyz.shape[0]
-    assert (
-        num_points == plydata.elements[0].count
-    ), "Number of points extracted from ply file don't match the amount in the file, please check your input!"
-    assert (
-        len(plydata.elements) == 1
-    ), f"Expected to find one element in plydata, found {len(plydata.elements)}, please check your input!"
-
-    return torch.from_numpy(xyz), torch.from_numpy(rgb)
+    return torch.from_numpy(positions), torch.from_numpy(colors), torch.from_numpy(normals)
 
 
 def read_ply_o3d(path: Union[str, Path], convert_to_float32: bool = False) -> o3d.geometry.PointCloud:
@@ -622,8 +630,10 @@ def read_ply_o3d(path: Union[str, Path], convert_to_float32: bool = False) -> o3
         path = str(path)
 
     pcd = o3d.t.io.read_point_cloud(path)
+
+    # Open3D's project to depth function needs float32
     if convert_to_float32:
-        pcd.point.positions = pcd.point.positions.to(o3d.core.Dtype.Float32) # sparse projection doesn't like float32
+        pcd.point.positions = pcd.point.positions.to(o3d.core.Dtype.Float32)
     return pcd
 
 

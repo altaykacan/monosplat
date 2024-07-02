@@ -23,6 +23,7 @@ import numpy as np
 import open3d as o3d
 
 from modules.pose.alignment import umeyama_alignment
+from modules.pose.visualization import save_traj
 from modules.pose.utils import get_transformation_matrix
 from modules.io.utils import read_all_poses_and_stamps, save_pcd_o3d
 from modules.eval.metrics import (
@@ -58,11 +59,15 @@ def main(args):
     crop_pred_cloud = args.crop_pred_cloud
     crop_ref_cloud = args.crop_ref_cloud
     vis_downsample_voxel_size = args.vis_downsample_voxel_size
+    pose_scale = args.pose_scale
+    init_downsample = args.init_downsample
+    init_downsample_voxel_size = args.init_downsample_voxel_size
+    exp_name = "_" + args.exp_name if args.exp_name is not None else ""
 
     # Setup logging
     now = datetime.datetime.now()
     timestamp = now.strftime("%m-%d_%H-%M-%S")
-    output_dir = output_dir / Path(f"pcd_{timestamp}")
+    output_dir = output_dir / Path(f"pcd{exp_name}_{timestamp}")
     log_path = output_dir.absolute() / Path("log.txt")
     output_dir.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(filename=log_path, level=logging.INFO, format='%(levelname)s - %(message)s')
@@ -97,10 +102,32 @@ def main(args):
         dataset,
         )
 
+    # Matches the scale of the predicted pose with the reconstruction
+    scaled_traj_m = pose_scale * traj_m
+
     # Align the two point clouds using poses
-    rot, t, s = umeyama_alignment(traj_m, ref_traj_m, align_scale)
+    rot, t, s = umeyama_alignment(scaled_traj_m, ref_traj_m, align_scale)
     T =  get_transformation_matrix(rot, t)
     logging.info(f"The computed coordinate frame alignment transformation is:\n{T.numpy()}")
+    logging.info(f"The factor to multiply the predicted pointcloud is: \n {s}")
+
+    save_traj([traj_m, ref_traj_m],
+            labels=["pred", "ref"],
+            filename=f"pose_raw.png",
+            output_dir=output_dir,
+    )
+
+    save_traj([scaled_traj_m, ref_traj_m],
+            labels=["pred", "ref"],
+            filename=f"pose_scaled.png",
+            output_dir=output_dir,
+    )
+
+    save_traj([rot @ scaled_traj_m + t.view(3,1), ref_traj_m],
+            labels=["pred", "ref"],
+            filename=f"pose_transformed.png",
+            output_dir=output_dir,
+    )
 
     # Save clouds before alignment
     if save_clouds:
@@ -108,13 +135,20 @@ def main(args):
             pred_pcd,
             ref_pcd,
             vis_downsample_voxel_size,
-            filename="pcd_pre_align.ply",
+            filename="1_pcd_pre_align.ply",
             output_dir=output_dir,
             )
 
-    # Align and scale
-    pred_pcd = pred_pcd.transform(T)
+    # Scale and align
     pred_pcd = pred_pcd.scale(scale=s, center=pred_pcd.get_center())
+    pred_pcd = pred_pcd.transform(T)
+
+    # Downsample clouds if specified
+    if init_downsample:
+        pred_pcd = pred_pcd.voxel_down_sample(voxel_size=init_downsample_voxel_size)
+        logging.info(f"Predicted point cloud has {len(pred_pcd.points)} points after voxel downsampling")
+        ref_pcd = ref_pcd.voxel_down_sample(voxel_size=init_downsample_voxel_size)
+        logging.info(f"Reference point cloud now has {len(ref_pcd.points)} points after voxel downsampling")
 
     # Save clouds after alignment
     if save_clouds:
@@ -122,7 +156,7 @@ def main(args):
             pred_pcd,
             ref_pcd,
             vis_downsample_voxel_size,
-            filename="pcd_pre_register.ply",
+            filename="2_pcd_after_align.ply",
             output_dir=output_dir,
             )
 
@@ -137,7 +171,7 @@ def main(args):
                 pred_pcd,
                 ref_pcd,
                 vis_downsample_voxel_size,
-                filename="pcd_after_pred_crop.ply",
+                filename="3_pcd_after_pred_crop.ply",
                 output_dir=output_dir,
                 )
 
@@ -151,7 +185,7 @@ def main(args):
                 pred_pcd,
                 ref_pcd,
                 vis_downsample_voxel_size,
-                filename="pcd_after_ref_crop.ply",
+                filename="4_pcd_after_ref_crop.ply",
                 output_dir=output_dir,
                 )
 
@@ -186,12 +220,14 @@ def main(args):
                 pred_pcd,
                 ref_pcd,
                 vis_downsample_voxel_size,
-                filename="pcd_post_register.ply",
+                filename="5_pcd_post_register.ply",
                 output_dir=output_dir,
                 )
 
     # Compute metrics
+    logging.info("Computing distances from predicted cloud to reference cloud...")
     pred_to_ref_dists = torch.tensor(pred_pcd.compute_point_cloud_distance(ref_pcd)).double()
+    logging.info("Computing distances from reference cloud to predicted cloud...")
     ref_to_pred_dists = torch.tensor(ref_pcd.compute_point_cloud_distance(pred_pcd)).double()
     results["acc"] = compute_accuracy_pcd(pred_to_ref_dists)
     results["comp"] = compute_completion_pcd(ref_to_pred_dists)
@@ -213,12 +249,16 @@ if __name__=="__main__":
     parser.add_argument("--ref_dataset", type=str, help="Name of the dataset that the reference pose files are formatted for. See './configs/data.py' for a list of available formats.")
     parser.add_argument("--output_dir", type=str, default="./evaluation/eval_results", help="The directory where the logs and the outputs will be saved. Outputs are timestamped.")
     parser.add_argument("--align_scale", action="store_true", help="Flag to whether align the scales of the two point clouds when aligning the coordinate frames using the poses.")
+    parser.add_argument("--pose_scale", type=float, default=1.0, help="The value to multiply poses with")
     parser.add_argument("--register_clouds", action="store_true", help="Flag to whether register the two point clouds after alignment.")
     parser.add_argument("--use_color_registration", action="store_true", help="Flag to whether use multi-scale colored ICP registration instead of the purely geometry based variant.")
     parser.add_argument("--crop_pred_cloud", action="store_true", help="Flag to whether crop the predicted cloud to fit into the bounding box of the reference cloud for metric compuation.")
     parser.add_argument("--crop_ref_cloud", action="store_true", help="Flag to whether crop the reference cloud to fit into the bounding box of the predicted cloud for metric compuation.")
     parser.add_argument("--save_clouds", action="store_true", help="Flag to whether save intermediate representations of the clouds, useful for debugging.")
     parser.add_argument("--vis_downsample_voxel_size", type=float, default=0.05, help="Voxel size used for downsampling the saved clouds. Useful for reducing memory footprint of debugging output.")
+    parser.add_argument("--init_downsample", action="store_true", help="Flag to downsample both clouds after aligning to metric scale to make calculations less intensive")
+    parser.add_argument("--init_downsample_voxel_size", type=float, default=0.05, help="Voxel size for pre-downsampling in metric scale")
+    parser.add_argument("--exp_name", type=str, default=None, help="Name of the experiment to add to the output directory")
 
     args = parser.parse_args()
     main(args)

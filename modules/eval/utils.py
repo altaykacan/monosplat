@@ -1,4 +1,5 @@
 import copy
+import logging
 from pathlib import Path
 from typing import Dict, List, Union, Tuple
 
@@ -11,6 +12,7 @@ import matplotlib.pyplot as plt
 from configs.data import SUPPORTED_DATASETS
 from modules.eval.tum_rgbd_tools.associate import associate
 
+log = logging.getLogger(__name__)
 
 def round_results(results: Dict, decimal_point: int) -> Dict:
     "Parses all elements of a dictionary and rounds them up to a given decimal point"
@@ -118,7 +120,6 @@ def get_pose_matches(poses: torch.Tensor, ref_poses: torch.Tensor, stamps: Union
     return matched_traj, matched_ref_traj
 
 
-
 def save_pointclouds_src_target(source: o3d.geometry.PointCloud,
                                 target: o3d.geometry.PointCloud,
                                 downsample_voxel_size: float = -1.0,
@@ -171,16 +172,19 @@ def do_multiscale_colored_icp(source: o3d.geometry.PointCloud,
         radius = voxel_radius[scale]
 
         # Downsample point cloud for current scale
+        log.info(f"Downsampling clouds for voxel radius: {radius}")
         source_down = source.voxel_down_sample(radius)
         target_down = target.voxel_down_sample(radius)
 
         # Estimate normals, necessary for point-to-plane ICP
+        log.info(f"Estimating normals for voxel radius: {radius}")
         source_down.estimate_normals(
             o3d.geometry.KDTreeSearchParamHybrid(radius=radius * 2, max_nn=30))
         target_down.estimate_normals(
             o3d.geometry.KDTreeSearchParamHybrid(radius=radius * 2, max_nn=30))
 
         # Do the actual registration
+        log.info(f"Registering clouds for voxel radius: {radius}")
         result_icp = o3d.pipelines.registration.registration_colored_icp(
             source_down, target_down, radius, current_transformation,
             o3d.pipelines.registration.TransformationEstimationForColoredICP(),
@@ -198,6 +202,12 @@ def do_point_to_plane_icp(source: o3d.geometry.PointCloud,
                           ) ->  np.ndarray:
     # Initial guess of the transform source to target, assuming we did alignment with poses
     trans_init = np.eye(4)
+
+    radius = 0.05
+    source.estimate_normals(
+        o3d.geometry.KDTreeSearchParamHybrid(radius=radius * 2, max_nn=30))
+    target.estimate_normals(
+        o3d.geometry.KDTreeSearchParamHybrid(radius=radius * 2, max_nn=30))
 
     # TODO the threshold we use might be off if we have COLMAP clouds, reference cloud must be in metric scale
     reg_p2l = o3d.pipelines.registration.registration_icp(

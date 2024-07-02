@@ -69,13 +69,16 @@ def main(args):
         dataloader = DataLoader(dataset, batch_size, shuffle=False, drop_last=False)
         gt_loader = KITTI360DepthModel(dataset)
 
+        # One depth model per dataset is enough
         if model is None and depth_model == "metric3d":
             model = Metric3Dv2(dataset.intrinsics, backbone=model_variant)
             model_variant = model._backbone # in case ViT backbone isn't available due to old GPU
 
-        # Need to instantiate both again for every new dataset
+        # Need a new precomputed depth model for every new dataset
         if depth_model == "metric3d":
             model = PrecomputedDepthModel(dataset)
+
+        # For sanity checks of metrics
         if depth_model == "gt_depth":
             model = KITTI360DepthModel(dataset)
 
@@ -114,11 +117,12 @@ if __name__=="__main__":
     parser = argparse.ArgumentParser(description="Extracts ground truth depth information from KITTI360 and compares it with Depth Model predictions")
     parser.add_argument("--sequences", type=int, default=0, nargs="+", help="Sequence ids from KITTI360")
     parser.add_argument("--cam_id", type=int, default=0, help="Camera id from KITTI360")
-    parser.add_argument("--depth_model", type=str, default="metric3d", required=True, options=["precomputed", "metric3d"] help="Depth model to use")
+    parser.add_argument("--depth_model", type=str, default="metric3d", required=True, options=["precomputed", "metric3d", "gt_depth"], help="Depth model to use")
     parser.add_argument("--model_variant", type=str, default="vit_giant", required=False, help="Depth model variant to use")
     parser.add_argument("--num_images", type=int, default=-1, help="Number of images to compute metrics and average over, enter -1 to use all images")
     parser.add_argument("--batch_size", type=int, default=2, help="Number of images to predict depths for in one iteration")
     parser.add_argument("--output", type=str, default="./evaluation/eval_results/", help="Path to save evaluation results")
+    parser.add_argument("--end_id", type=int, default=-1, help="Id of the last frame to use for every sequence.")
 
     args = parser.parse_args()
 

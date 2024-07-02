@@ -1,3 +1,4 @@
+import pickle
 from pathlib import Path
 from typing import List, Union, Dict
 
@@ -17,6 +18,7 @@ def save_histogram(
         filename: Union[Path, str] = "debug_hist",
         output_dir: Union[Path, str] = ".",
         bin_count: int=100,
+        color: str = None,
         ) -> None:
     """
     Prepares `center`, `hist`, and `width` for using
@@ -37,8 +39,8 @@ def save_histogram(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / filename
-    fig = plt.figure()
-    plt.title(title)
+    fig = plt.figure(dpi=300)
+    # plt.title(title)
     plt.grid()
     for tensor_input, label in zip(tensor_inputs, labels):
         tensor_input = tensor_input.detach().cpu().numpy()
@@ -55,7 +57,7 @@ def save_histogram(
 
     plt.xlabel("Scale Value Bins")
     plt.ylabel("Counts")
-    plt.legend()
+    plt.legend(bbox_to_anchor=(1.1, 1.05))
     plt.savefig(str(output_path) + ".png")
     plt.close()
 
@@ -70,6 +72,10 @@ def save_scale_plot(
         filename: Union[Path, str]="scale_plot",
         output_dir: Union[Path, str]=".",
         window_size: int = 5,
+        ylabel: str = "Scale values",
+        color: str = None,
+        linewidth: float = None,
+        show_raw_data: bool = True,
         ) -> None:
         if not isinstance(scales, list):
             scales = [scales]
@@ -91,21 +97,23 @@ def save_scale_plot(
             output_dir = Path(output_dir)
 
         output_dir.mkdir(parents=True, exist_ok=True)
-        plt.figure()
+        plt.figure(dpi=300)
         plt.grid()
-        plt.title(title)
+        # plt.title(title)
         for curr_scale, curr_frame_id, curr_label in zip(scales, frame_ids, labels):
             # curr_scale and curr_frame_id are both 1D lists
             scale_array = curr_scale.detach().cpu().numpy()
             moving_avg = centered_moving_average(scale_array, window_size)
             mean_scale = np.mean(scale_array)
-            line = plt.plot(curr_frame_id, scale_array, label=curr_label, alpha=0.4)
-            plt.plot(curr_frame_id, moving_avg, color=line[0].get_color(), alpha=1.0)
-            plt.hlines(mean_scale, curr_frame_id[0], curr_frame_id[-1], linewidth=0.5, colors=line[0].get_color(), alpha=1.0, linestyles='dashed')
+            line = plt.plot(curr_frame_id, moving_avg, color=color, label=curr_label, alpha=1.0, linewidth=linewidth)
+            if show_raw_data:
+                plt.plot(curr_frame_id, scale_array, alpha=0.4, color=line[0].get_color(), linewidth=linewidth)
+
+            plt.hlines(mean_scale, curr_frame_id[0], curr_frame_id[-1], linewidth=1.5, colors=line[0].get_color(), alpha=1.0, linestyles='dashed')
 
         plt.xlabel("Frames")
-        plt.ylabel("Scale values")
-        plt.legend()
+        plt.ylabel(ylabel)
+        plt.legend(bbox_to_anchor=(1.0, 1.0), loc="upper right")
         plt.savefig(str(output_dir / filename) + ".png")
         plt.close()
 
@@ -115,27 +123,53 @@ def plot_dense_alignment_results(
         frame_ids_for_hist: List[int],
         frame_scales_for_hist: Dict,
         scale_tensors_to_plot: Dict,
+        tz_to_plot: Dict,
+        std_to_plot: Dict,
         log_dir: Path,
         dataset: BaseDataset,
         ) -> None:
 
-    # Plot the mean of scales for the different flow steps
+    # # Pickle the input so we can use them later to adjust the plots
+    # with open(log_dir / Path("scales.pickle"), "wb") as handle:
+    #     pickle.dump(scales, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    # with open(log_dir / Path("frame_ids_for_hist.pickle"), "wb") as handle:
+    #     pickle.dump(frame_ids_for_hist, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    # with open(log_dir / Path("frame_scales_for_hist.pickle"), "wb") as handle:
+    #     pickle.dump(frame_scales_for_hist, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    # with open(log_dir / Path("scale_tensors_to_plot.pickle"), "wb") as handle:
+    #     pickle.dump(scale_tensors_to_plot, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    # with open(log_dir / Path("tz_to_plot.pickle"), "wb") as handle:
+    #     pickle.dump(tz_to_plot, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    # with open(log_dir / Path("log_dir.pickle"), "wb") as handle:
+    #     pickle.dump(log_dir, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    # with open(log_dir / Path("dataset.pickle"), "wb") as handle:
+    #     pickle.dump(dataset, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+    # Plot the mean of scales for the different flow steps, scale plot
     labels = []
     frame_ids_for_plot = [] # lists of lists of integers
     frame_indices_for_plot = [] # needed for combined datasets
     scales_for_plot = [] # lists of 1D tensors
+
+    # To ensure plot colors stay the same even when we plot them individually
+    plot_idx = 0
+    prop_cycle = plt.rcParams['axes.prop_cycle']
+    colors = prop_cycle.by_key()['color']
+
     for flow_step, scale_per_flow in scales.items():
         sorted_pairs = sorted(scale_per_flow.items()) # the keys are the target frame ids
         sorted_frame_ids = [pair[0] for pair in sorted_pairs]
-        sorted_frame_indices = [dataset.frame_ids.index(frame_id) for frame_id in sorted_frame_ids]
         sorted_scales = torch.tensor([pair[1] for pair in sorted_pairs])
 
-        labels.append(f"Dense Scales with Flow Step {flow_step}")
+        # Useful for combined colmap datasets
+        sorted_frame_indices = [dataset.frame_ids.index(frame_id) for frame_id in sorted_frame_ids]
+
+        labels.append(f"Flow Step {flow_step}")
         frame_ids_for_plot.append(sorted_frame_ids)
         frame_indices_for_plot.append(sorted_frame_indices)
         scales_for_plot.append(sorted_scales)
 
-        # Save current flow step
+        # Save current flow step, scale plot
         if isinstance(dataset, CombinedColmapDataset):
             # Combined datasets have jumps in the frame ids due to naming convention
             # need to look at the index of the said frame instead of the id when plotting
@@ -145,7 +179,8 @@ def plot_dense_alignment_results(
                 labels[-1],
                 title=f"Dense Scale Alignment Results - Flow Step {flow_step}",
                 filename=f"dense_scale_plot_flow_step_{flow_step}",
-                output_dir=log_dir
+                output_dir=log_dir,
+                color=colors[plot_idx]
                 )
         else:
             save_scale_plot(
@@ -154,8 +189,10 @@ def plot_dense_alignment_results(
                 labels[-1],
                 title=f"Dense Scale Alignment Results - Flow Step {flow_step}",
                 filename=f"dense_scale_plot_flow_step_{flow_step}",
-                output_dir=log_dir
+                output_dir=log_dir,
+                color=colors[plot_idx]
                 )
+        plot_idx += 1
 
     # Save all flow steps
     if isinstance(dataset, CombinedColmapDataset):
@@ -167,7 +204,9 @@ def plot_dense_alignment_results(
             labels,
             title="Dense Scale Alignment Results",
             filename="dense_scale_plot_all",
-            output_dir=log_dir
+            output_dir=log_dir,
+            linewidth=0.8,
+            show_raw_data=False,
             )
     else:
         save_scale_plot(
@@ -176,10 +215,162 @@ def plot_dense_alignment_results(
             labels,
             title="Dense Scale Alignment Results",
             filename="dense_scale_plot_all",
-            output_dir=log_dir
+            output_dir=log_dir,
+            linewidth=0.8,
+            show_raw_data=False,
             )
 
-    # Plot histograms of per-frame scales for different flow steps
+    # Plot the t_z values for the different flow steps, tz plot
+    labels = []
+    frame_ids_for_plot = [] # lists of lists of integers
+    frame_indices_for_plot = [] # needed for combined datasets
+    tz_for_plot = [] # lists of 1D tensors
+
+    # To ensure plot colors stay the same even when we plot them individually
+    plot_idx = 0
+    prop_cycle = plt.rcParams['axes.prop_cycle']
+    colors = prop_cycle.by_key()['color']
+
+    for flow_step, tz_per_flow in tz_to_plot.items():
+        sorted_pairs = sorted(tz_per_flow.items()) # the keys are the target frame ids
+        sorted_frame_ids = [pair[0] for pair in sorted_pairs]
+        sorted_tz = torch.tensor([pair[1] for pair in sorted_pairs])
+
+        # Frame indices are the index in the lists not the frame ids, useful for CombinedColmapDatasets
+        sorted_frame_indices = [dataset.frame_ids.index(frame_id) for frame_id in sorted_frame_ids]
+
+        labels.append(f"Flow step {flow_step}")
+        frame_ids_for_plot.append(sorted_frame_ids)
+        frame_indices_for_plot.append(sorted_frame_indices)
+        tz_for_plot.append(sorted_tz)
+
+        # Save current flow step
+        if isinstance(dataset, CombinedColmapDataset):
+            # Combined datasets have jumps in the frame ids due to naming convention
+            # need to look at the index of the said frame instead of the id when plotting
+            save_scale_plot(
+                tz_for_plot[-1],
+                frame_indices_for_plot[-1],
+                labels[-1],
+                title=f"Dense Scale Alignment Results - Flow Step {flow_step}",
+                filename=f"dense_tz_plot_flow_step_{flow_step}",
+                output_dir=log_dir,
+                ylabel="t_z values",
+                color=colors[plot_idx],
+                )
+        else:
+            save_scale_plot(
+                tz_for_plot[-1],
+                frame_ids_for_plot[-1],
+                labels[-1],
+                title=f"Dense Scale Alignment Results - Flow Step {flow_step}",
+                filename=f"dense_tz_plot_flow_step_{flow_step}",
+                output_dir=log_dir,
+                ylabel="t_z values",
+                color=colors[plot_idx],
+                )
+        plot_idx += 1
+
+    # Save all flow steps for tz plot
+    if isinstance(dataset, CombinedColmapDataset):
+        # Combined datasets have jumps in the frame ids due to naming convention
+        # need to look at the index of the said frame instead of the id when plotting
+        save_scale_plot(
+            tz_for_plot,
+            frame_indices_for_plot,
+            labels,
+            title="Dense Scale Alignment Results",
+            filename="dense_tz_plot_all",
+            output_dir=log_dir,
+            ylabel="t_z values"
+            )
+    else:
+        save_scale_plot(
+            tz_for_plot,
+            frame_ids_for_plot,
+            labels,
+            title="Dense Scale Alignment Results",
+            filename="dense_tz_plot_all",
+            output_dir=log_dir,
+            ylabel="t_z values"
+            )
+
+    # Plot the standard deviations just like the t_z plots
+    labels = []
+    frame_ids_for_plot = [] # lists of lists of integers
+    frame_indices_for_plot = [] # needed for combined datasets
+    std_for_plot = [] # lists of 1D tensors
+
+    # To ensure plot colors stay the same even when we plot them individually
+    plot_idx = 0
+    prop_cycle = plt.rcParams['axes.prop_cycle']
+    colors = prop_cycle.by_key()['color']
+
+    for flow_step, std_per_flow in std_to_plot.items():
+        sorted_pairs = sorted(std_per_flow.items()) # the keys are the target frame ids
+        sorted_frame_ids = [pair[0] for pair in sorted_pairs]
+        sorted_std = torch.tensor([pair[1] for pair in sorted_pairs])
+
+        # Frame indices are the index in the lists not the frame ids, useful for CombinedColmapDatasets
+        sorted_frame_indices = [dataset.frame_ids.index(frame_id) for frame_id in sorted_frame_ids]
+
+        labels.append(f"Flow step {flow_step}")
+        frame_ids_for_plot.append(sorted_frame_ids)
+        frame_indices_for_plot.append(sorted_frame_indices)
+        std_for_plot.append(sorted_std)
+
+        # Save current flow step
+        if isinstance(dataset, CombinedColmapDataset):
+            # Combined datasets have jumps in the frame ids due to naming convention
+            # need to look at the index of the said frame instead of the id when plotting
+            save_scale_plot(
+                std_for_plot[-1],
+                frame_indices_for_plot[-1],
+                labels[-1],
+                title=f"Dense Scale Alignment Results - Flow Step {flow_step}",
+                filename=f"dense_std_plot_flow_step_{flow_step}",
+                output_dir=log_dir,
+                ylabel="Standard Deviation Values",
+                color=colors[plot_idx],
+                )
+        else:
+            save_scale_plot(
+                std_for_plot[-1],
+                frame_ids_for_plot[-1],
+                labels[-1],
+                title=f"Dense Scale Alignment Results - Flow Step {flow_step}",
+                filename=f"dense_std_plot_flow_step_{flow_step}",
+                output_dir=log_dir,
+                ylabel="Standard Deviation Values",
+                color=colors[plot_idx],
+                )
+        plot_idx += 1
+
+    # Save all flow steps for tz plot
+    if isinstance(dataset, CombinedColmapDataset):
+        # Combined datasets have jumps in the frame ids due to naming convention
+        # need to look at the index of the said frame instead of the id when plotting
+        save_scale_plot(
+            std_for_plot,
+            frame_indices_for_plot,
+            labels,
+            title="Dense Scale Alignment Results",
+            filename="dense_std_plot_all",
+            output_dir=log_dir,
+            ylabel="Standard Deviation Values"
+            )
+    else:
+        save_scale_plot(
+            std_for_plot,
+            frame_ids_for_plot,
+            labels,
+            title="Dense Scale Alignment Results",
+            filename="dense_std_plot_all",
+            output_dir=log_dir,
+            ylabel="Standard Deviation Values"
+            )
+
+    # Plot histograms of scales for different flow steps
     for curr_frame_id in frame_ids_for_hist:
         labels = []
         scales_for_histogram = [] # list of 1D tensors
@@ -231,9 +422,9 @@ def plot_dense_alignment_results(
 
     # Plot histograms for same frames backward and forward for different flow steps
     for curr_frame_id in frame_ids_for_hist:
-        labels = []
-        scales_for_histogram = [] # list of 1D tensors
         for flow_step, scale_per_flow in frame_scales_for_hist.items():
+            labels = []
+            scales_for_histogram = [] # list of 1D tensors
             curr_scales = scale_per_flow[curr_frame_id]
             if len(curr_scales["forward"]) == 0:
                 continue
@@ -259,15 +450,24 @@ def plot_dense_alignment_results(
             f = scale_tensors["forward"]
             b = scale_tensors["backward"]
 
-            filename = Path(f"cleaned_forward_scales_frame_{frame_id}_flow_step_{flow_step}.png")
             f = f.detach().cpu().squeeze().numpy()
             max_value = np.max(f[f > 0])
             min_value = np.min(f[f > 0])
             mean_value = np.mean(f[f > 0])
-            plt.figure()
-            plt.imshow(f, cmap="viridis")
+            filename = Path(f"cleaned_forward_scales_frame_{frame_id}_flow_step_{flow_step}_mean_{mean_value}.png")
+            fig = plt.figure(dpi=300)
+            ax = plt.axes()
+            im = ax.imshow(f, cmap="viridis")
             plt.axis('off')
-            plt.title(f"Frame {frame_id} - Flow Step {flow_step} Mean: {mean_value:.2f}")
-            plt.colorbar(shrink=0.7)
-            plt.savefig(str(output_dir / filename))
+
+            # Colorbar code from: https://stackoverflow.com/a/56900830/17588877
+            # Create an axes for colorbar. The position of the axes is calculated based on the position of ax.
+            # You can change 0.01 to adjust the distance between the main image and the colorbar.
+            # You can change 0.02 to adjust the width of the colorbar.
+            # This practice is universal for both subplots and GeoAxes.
+            cax = fig.add_axes([ax.get_position().x1+0.01,ax.get_position().y0,0.02,ax.get_position().height])
+            plt.colorbar(im, cax=cax) # Similar to fig.colorbar(im, cax = cax)
+
+            # plt.title(f"Frame {frame_id} - Flow Step {flow_step} Mean: {mean_value:.2f}")
+            plt.savefig(str(output_dir / filename), bbox_inches="tight")
             plt.close()

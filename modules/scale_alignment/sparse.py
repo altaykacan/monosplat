@@ -8,6 +8,7 @@ import open3d as o3d
 from tqdm import tqdm
 
 from modules.core.utils import format_intrinsics
+from modules.io.datasets import ColmapDataset
 from modules.io.utils import read_ply, read_ply_o3d, save_image_torch
 from modules.scale_alignment.utils import project_pcd_o3d
 from modules.scale_alignment.visualization import save_scale_plot, save_histogram
@@ -68,9 +69,15 @@ def least_squares_only_scale(
         b = p[m].view(-1, 1) # input vectors, [num_sparse_depths]
         B = b
 
+
         # Now we have a least squares problem (a - Bx).T (a - Bx)
-        solution = torch.linalg.inv(B.T @ B) @ B.T @ a
-        scales.append(solution[0])
+        try:
+            solution = torch.linalg.inv(B.T @ B) @ B.T @ a
+            scales.append(solution[0])
+        except Exception as E:
+            log.warning(f"Encountered exception {E} while trying to solve for sparse scale alignment. Skipping frame idx {frame_idx}.")
+            scales.append(solution[0]) # keep the last computed value, otherwise we get messed up results
+
 
     scales = torch.cat(scales, dim=0)[:, None, None] # [num_frames, 1, 1]
 
@@ -108,9 +115,14 @@ def least_squares_scale_and_shift(
         B = torch.stack((b, col_of_ones), dim=1) # [num_sparse_depths, 2]
 
         # Now we have a least squares problem (a - Bx).T (a - Bx)
-        solution = torch.linalg.inv(B.T @ B) @ B.T @ a
-        scales.append(solution[0])
-        shifts.append(solution[1])
+        try:
+            solution = torch.linalg.inv(B.T @ B) @ B.T @ a
+            scales.append(solution[0])
+            shifts.append(solution[1])
+        except Exception as E:
+            log.warning(f"Encountered exception {E} while trying to solve for sparse scale alignment. Skipping frame idx {frame_idx}.")
+            scales.append(solution[0]) # keep the last computed value, otherwise we get messed up results
+
 
     scales = torch.cat(scales, dim=0)[:, None, None] # [num_frames, 1, 1]
     shifts = torch.cat(shifts, dim=0)[:, None, None]  # [num_frames, 1, 1]
@@ -142,11 +154,14 @@ def do_sparse_alignment(
     marked via `mask` (if the value is `True` it is ignored in scale computation)
     and depths above a maximum depth threshold.
     """
-    if sparse_cloud_path == "":
+    if sparse_cloud_path is None:
         raise ValueError("You need to specify the path to a sparse reconstruction to align scales with if you want to use 'sparse' alignment.")
 
     # Read in the sparse cloud
-    pcd = read_ply_o3d(sparse_cloud_path, convert_to_float32=True)
+    if sparse_cloud_path.name == "points3D.txt":
+        pcd = ColmapDataset.read_colmap_pcd_o3d(sparse_cloud_path, convert_to_float32=True)
+    else:
+        pcd = read_ply_o3d(sparse_cloud_path, convert_to_float32=True)
 
     # Iterate over the depth directory, only keep frames that we have poses for
     dense_depths = []
@@ -171,19 +186,30 @@ def do_sparse_alignment(
     log.info("Extracting sparse depths for sparse scale alignment, this might take some time...")
     for curr_pose in tqdm(poses):
         sparse_depth = project_pcd_o3d(pcd, W, H, K, torch.linalg.inv(curr_pose), depth_max=max_d)
+
+        # max_d might be with a different scale, need to limit and take the 10% of the depths
+        if sparse_depth.max() < (0.5 * max_d):
+            sparse_max = sparse_depth.max()
+            new_max_d = sparse_max * 10 / 100
+            sparse_depth = project_pcd_o3d(pcd, W, H, K, torch.linalg.inv(curr_pose), depth_max=new_max_d)
+
         sparse_depths.append(sparse_depth.squeeze())
 
     sparse_depths = torch.stack(sparse_depths, dim=0) # [num_frames, H, W]
 
     # Compute alignment
-    mask = (sparse_depths > 0.1) & (dense_depths < max_d) & torch.logical_not(ignore_masks)
+    mask = (sparse_depths > 0.01) & (dense_depths > min_d) & (dense_depths < max_d) & torch.logical_not(ignore_masks)
     # TODO remove option to compute scale and shift, only scale is better!
     scale, shift = least_squares_scale_and_shift(dense_depths, sparse_depths, mask)
     only_scale = least_squares_only_scale(dense_depths, sparse_depths, mask)
     scale_check, shift_check = compute_scale_and_shift(dense_depths, sparse_depths, mask) # to double check own results with the DN-splatter implementation
 
-    save_scale_plot([(1 / (scale + 0.001)).clamp(-10,10)], stamps, "Smoothed Scales", filename="scale_and_shift", output_dir=log_dir)
-    save_scale_plot([1 / (only_scale + 0.001)], stamps, "Smoothed Scales", filename="only_scale", output_dir=log_dir)
+    save_scale_plot([(1 / (scale + 0.001)).clamp(-10,1000)], stamps, "Scales", filename="scale_and_shift", output_dir=log_dir)
+    save_scale_plot([1 / (only_scale + 0.001)], stamps, "Scales", filename="only_scale", output_dir=log_dir)
+
+    log.info("===============")
+    log.info(f"FINISHED SPARSE SCALE ALIGNMENT, MEAN OF COMPUTED SCALES IS: { (1 / (only_scale + 0.001)).mean().item():0.4f}")
+    log.info("===============")
 
     if return_only_scale:
         return only_scale, torch.zeros_like(only_scale)
