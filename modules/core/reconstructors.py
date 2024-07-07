@@ -11,6 +11,7 @@ from modules.core.maps import PointCloud
 from modules.core.models import RAFT, Metric3Dv2NormalModel, PrecomputedNormalModel
 from modules.core.utils import compute_occlusions, grow_bool_mask
 from modules.core.interfaces import BaseReconstructor, BaseModel, BaseBackprojector, BaseDataset
+from modules.core.visualization import visualize_flow
 from modules.depth.models import DepthModel
 from modules.io.utils import Logger, clean_batch, save_image_torch
 from modules.segmentation.moving_objects import compute_dists
@@ -182,17 +183,25 @@ class MovingObjectRemoverReconstructor(SimpleReconstructor):
         self.raw_map = PointCloud()
         self.logger = Logger(self)
 
+        self.prev_mov_obj_mask = None # for tracking moving objects
+
     def parse_config(self, cfg: Dict) -> None:
         super().parse_config(cfg)
 
-        self.flow_steps = cfg.get("flow_steps", [-2, -1, 1, 2])
+        self.flow_steps = cfg.get("flow_steps", [-4, -3, -2, -1, 1, 2, 3, 4])
         self.min_flow = cfg.get("min_flow", 0.5)
-        self.classes_to_remove = cfg.get("classes_to_remove", ["car", "bus", "person", "truck", "bicycle", "motorcycle", "rider"])
+        self.classes_to_remove = cfg.get("classes_to_remove", ["car", "bus", "person", "truck", "bicycle", "motorcycle", "rider", "sky"])
         self.max_dists_moving_obj = cfg.get("max_dists_moving_obj", 30)
         self.max_d_moving_obj = cfg.get("max_d_moving_obj", 40.0)
-        self.dists_thresh_moving_obj = cfg.get("dists_thresh_moving_obj", 1.0) # dists threshold as this value multiplied by the mean
+        self.dists_thresh_moving_obj = cfg.get("dists_thresh_moving_obj", 1.0) # dists threshold is this value multiplied by the mean
         self.intersection_thresh_moving_obj = cfg.get("intersection_thresh_moving_obj", 0.7) # intersection of dists mask and instance mask
-        self.min_hits_moving_obj = cfg.get("min_hits_moving_obj", 1)
+        self.min_hits_moving_obj = cfg.get("min_hits_moving_obj", 2)
+
+        self.track_moving_obj = cfg.get("track_moving_obj", True) # flag to whether to track
+        self.intersection_thresh_tracking = cfg.get("intersection_thresh_tracking", 0.4) # intersection of dists mask and instance mask
+
+        if self.track_moving_obj and self.batch_size != 1:
+            raise ValueError("Tracking moving objects only makes sense if your batch size is 1!")
 
     def run(self):
         super().run()
@@ -210,6 +219,14 @@ class MovingObjectRemoverReconstructor(SimpleReconstructor):
         depth_preds = self.depth_model.predict({"images": images, "frame_ids": frame_ids})
         depths = depth_preds["depths"]
         N, _, H, W = depths.shape
+
+        # For debug
+        if frame_ids[0].item() == 641:
+            print("hoold up")
+
+        # For naive tracking
+        if self.prev_mov_obj_mask is None and self.track_moving_obj:
+            self.prev_mov_obj_mask = torch.zeros_like(depths).bool()
 
         # Scale and shift target depths (no transformation if not specified in dataset)
         depth_scales, depth_shifts = self.dataset.get_depth_scale_shift_by_frame_ids(frame_ids)
@@ -276,16 +293,26 @@ class MovingObjectRemoverReconstructor(SimpleReconstructor):
 
             # Check relative intersection size of dists_masks with instance masks
             proposal_mask = torch.zeros_like(dists_mask)
-            for i, ins_masks_for_sample in enumerate(instance_masks):
+            for i, ins_masks_for_sample in enumerate(instance_masks): # i is the batch index
                 for ins_mask in ins_masks_for_sample:
                     ins_mask_size = torch.sum(ins_mask) # scalar
 
                     # i is the index of our sample within the current batch
                     intersection_size = torch.sum(ins_mask & dists_mask[i])
+                    track_intersection_size = torch.sum(ins_mask / self.prev_mov_obj_mask[i])
                     relative_size = intersection_size / ins_mask_size
+                    track_relative_size = track_intersection_size / ins_mask_size
 
+                    # if current instance mask intersects previous moving object masks
                     # if dists mask intersects instance mask take the whole instance
-                    if relative_size > self.intersection_thresh_moving_obj:
+
+                    if self.track_moving_obj:
+                        add_ins_mask = (relative_size >= self.intersection_thresh_moving_obj)  \
+                                    or (track_relative_size >= self.intersection_thresh_moving_obj)
+                    else:
+                        add_ins_mask = (relative_size >= self.intersection_thresh_moving_obj)
+
+                    if add_ins_mask:
                         grown_ins_mask = grow_bool_mask(ins_mask, iterations=3)
                         refined_ins_mask = moveable_masks[i] & grown_ins_mask
                         proposal_mask[i] = proposal_mask[i] | refined_ins_mask
@@ -302,6 +329,10 @@ class MovingObjectRemoverReconstructor(SimpleReconstructor):
 
         # Moving object pixels are 'True'
         moving_object_masks = moving_object_masks >= self.min_hits_moving_obj
+
+        if self.track_moving_obj:
+            self.prev_mov_obj_mask = moving_object_masks # remember for next iteration
+
         if batch_idx % self.log_every_nth_batch == 0:
             plot_moving_object_removal_results(
                 frame_ids,

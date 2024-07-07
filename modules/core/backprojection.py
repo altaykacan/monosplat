@@ -92,3 +92,51 @@ class Backprojector(BaseBackprojector):
             masks = masks & (torch.rand((N, C, H, W)).to(device) > dropout)
 
         return masks
+
+class DepthBasedDropoutBackprojector(Backprojector):
+    def compute_backprojection_masks(
+            self,
+            images: torch.Tensor,
+            depths: torch.Tensor,
+            depth_scales: torch.Tensor = None,
+            depth_shifts: torch.Tensor = None,
+            ) -> torch.Tensor:
+        """
+        Computes a similar backprojection mask like `compute_backprojection_mask()`
+        from the super class  but uses a sigmoid function to determine a
+        pixel-wise dropout probability based on the normalized depth values.
+        """
+        masks = torch.ones_like(depths).bool()
+        device = depths.device
+        N, C, H, W = masks.shape # C is 1
+
+        # Region of interest as [top, bottom, left, right] edge indices
+        roi = self.cfg.get("roi", [])
+
+        if roi != []:
+            masks[:, :, : roi[0], :] = False
+            masks[:, :, roi[1] :, :] = False
+            masks[:, :, :, : roi[2]] = False
+            masks[:, :, :, roi[3] :] = False
+
+        # Maximum and minimum depths (unscaled and unshifted) for backprojection
+        max_d = torch.ones((N, 1, 1, 1)).to(device) * self.cfg.get("max_d", 50.0)
+        min_d = torch.ones((N, 1, 1, 1)).to(device) * self.cfg.get("min_d", 0.0)
+
+        # Adjust the maximum minimum depth thresholds for current scale
+        if (depth_scales is not None) and (depth_shifts is not None):
+            max_d = depth_scales * max_d + depth_shifts
+            min_d = depth_scales * min_d + depth_shifts
+
+        # Depths are already scaled/shifted
+        masks = masks & (depths < max_d) & (depths > min_d)
+
+        dropout_coeff = self.cfg.get("dropout_coeff", 0.4)
+        dropout_prob_min = self.cfg.get("dropout_prob_min", 0.7)
+
+        # Depth between 0 and 1 now
+        normalized_depths = (depths - depths.min()) / (depths.max() - depths.min())
+        dropout_probs = (dropout_coeff * torch.tanh(normalized_depths) + dropout_prob_min).clamp(0,1).to(device)
+        masks = masks & (torch.rand((N, C, H, W)).to(device) > dropout_probs)
+
+        return masks

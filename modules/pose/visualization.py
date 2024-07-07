@@ -10,7 +10,7 @@ from modules.eval.utils import get_dummy_stamps
 from modules.eval.tum_rgbd_tools.evaluate_ate import plot_traj
 
 
-def save_traj(trajectories: List[torch.Tensor], labels: List[str], filename: Union[str, Path], output_dir: Union[str, Path] = ".", show_diff: bool = False) -> None:
+def save_traj(trajectories: List[torch.Tensor], labels: List[str], filename: Union[str, Path], output_dir: Union[str, Path] = ".", show_diff: bool = False, show_frames: bool = False) -> None:
     """Plots and saves trajectories. Trajectories should be given as `[3, num_frames]` tensors."""
     if show_diff and len(trajectories) != 2:
         raise RuntimeError(f"If you want to plot the differences between two trajectories, you need to provide only two trajectories, you gave {len(trajectories)}!")
@@ -26,6 +26,11 @@ def save_traj(trajectories: List[torch.Tensor], labels: List[str], filename: Uni
 
         # Function expects trajectories as [N, 3] so we need to transpose
         plot_traj(ax, stamps_np, traj_np.T, "-", color, label)
+
+        if show_frames:
+            x_coords = traj_np[0, ::20]
+            y_coords = traj_np[1, ::20]
+            ax.scatter(x_coords, y_coords, color=color, marker="o", s=5)
 
     if show_diff:
         label = "difference"

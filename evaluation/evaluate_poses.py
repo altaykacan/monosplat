@@ -121,6 +121,13 @@ def main(args):
                     filename=f"{pose_path.stem}_1_umeyama_alignment.png",
                     output_dir=output_dir
         )
+        save_traj([s * rot @ traj_m + t, ref_traj_m],
+                    labels=["aligned", "ref"],
+                    filename=f"{pose_path.stem}_1_1_umeyama_alignment_with_poses.png",
+                    output_dir=output_dir,
+                    show_frames=True,
+
+        )
         save_traj([traj_m, ref_traj_m],
                     labels=["pred", "ref"],
                     filename=f"{pose_path.stem}_2_no_alignment.png",

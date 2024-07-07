@@ -79,7 +79,8 @@ def compute_dists(
         occlusion_mask = torch.ones_like(flow_mask).bool()
     else:
         # Grows the False regions which represent the occluded pixels
-        occlusion_mask = shrink_bool_mask(occlusion_mask, iterations=3)
+        # occlusion_mask = shrink_bool_mask(occlusion_mask, iterations=1)
+        pass # not growing occlusion mask to not mess up the dists
 
     mask = corr_mask & flow_mask &  occlusion_mask # mask of pixels to include
 

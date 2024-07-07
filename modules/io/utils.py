@@ -270,10 +270,6 @@ def read_all_poses_and_stamps(pose_path: Union[Path, str], dataset: str = "custo
 
     poses = torch.stack(poses, dim=0)
 
-    # If the stamps are None (no frame id in pose file), we simply enumerate the images (relevant for KITTI)
-    if stamps[0] is None:
-        stamps = [i for i in range(len(poses))]
-
     return poses, stamps
 
 
@@ -499,7 +495,7 @@ def create_poses_for_3dgs(out_dir: Path, dataset: BaseDataset) -> None:
     else:
         log.info(f"Found a custom dataset, saving unscaled poses 'poses.txt' at {str(out_dir)}")
         slam_pose_path = dataset.pose_path
-        out_path = out_dir / Path("poses.txt")
+        out_path = out_dir / Path("slam_poses.txt")
         shutil.copy(slam_pose_path, out_path)
 
     log.info(f"Wrote poses at '{str(out_path)}'")

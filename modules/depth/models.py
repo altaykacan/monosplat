@@ -224,7 +224,6 @@ class KITTI360DepthModel(DepthModel):
         return {"depths": depths}
 
 
-# TODO implement and add the directory structure that we expect
 class PrecomputedDepthModel(DepthModel):
     """
     Dummy depth model that loads in precomputed depths from a previous run
@@ -241,6 +240,9 @@ class PrecomputedDepthModel(DepthModel):
             self._device ="cuda" if torch.cuda.is_available() else "cpu"
         else:
             self._device = device
+
+        if len(self._dataset.depth_paths) == 0:
+            raise ValueError("The length of your dataset's depth paths is zero! You can't use precomputed depths without any depth paths. Please check your dataset.")
 
     def load(self):
         pass

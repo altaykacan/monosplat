@@ -3,7 +3,7 @@ import sys
 
 import torch
 
-from modules.io.datasets import CustomDataset, KITTIDataset, KITTI360Dataset, ColmapDataset
+from modules.io.datasets import CustomDataset, KITTIDataset, KITTI360Dataset, ColmapDataset, CombinedColmapDataset
 from modules.depth.models import Metric3Dv2, PrecomputedDepthModel
 from modules.core.backprojection import Backprojector
 from modules.core.reconstructors import SimpleReconstructor
@@ -33,6 +33,11 @@ orig_intrinsics = [534.045, 534.045, 512, 288]
 target_size = [576, 1024]
 depth_dir = "/usr/stud/kaa/data/root/ds01/data/depths/arrays"
 dataset = ColmapDataset(colmap_dir, 1.0, orig_intrinsics, target_size=target_size, depth_dir=depth_dir,  depth_scale=1 / pose_scale, end=50)
+
+# TODO implement
+# DS combined
+colmap_dir =  None
+dataset = CombinedColmapDataset()
 
 # depth_model = Metric3Dv2(dataset.intrinsics, backbone="vit_giant")
 depth_model = PrecomputedDepthModel(dataset)
