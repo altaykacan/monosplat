@@ -25,6 +25,7 @@ def main(args):
     model_name = args.model.lower()
     normal_model_name = args.normal_model.lower()
     intrinsics = tuple(args.intrinsics) if args.intrinsics is not None else ()
+    skip_depths = args.skip_depths
     skip_depth_png = args.skip_depth_png
     skip_mask_depth_png = args.skip_mask_depth_png
     skip_normals = args.skip_normals
@@ -87,7 +88,7 @@ def main(args):
     normal_png_dir.mkdir(parents=True, exist_ok=True)
 
     # If any of these directories are not empty ask to clear or abort
-    if not ask_to_clear_dir(depth_array_dir):
+    if not skip_depths and not ask_to_clear_dir(depth_array_dir):
         logging.warning(f"Depth array directory '{str(depth_array_dir)}' is not empty and you chose not to continue. Aborting.")
         return -1
     if not skip_normals and not ask_to_clear_dir(normal_array_dir):
@@ -116,10 +117,11 @@ def main(args):
             normal_png_path = normal_png_dir / Path(f"{frame_id}.png")
 
             # Save the depth array
-            np.save(depth_array_path, depth)
+            if not skip_depths:
+                np.save(depth_array_path, depth)
 
             # Save the depth images if specified
-            if not skip_depth_png:
+            if not skip_depths and not skip_depth_png:
                 # Threshold the max depth, important to be able to save as 16-bit png
                 depth[depth > max_depth_png] = max_depth_png
 
@@ -147,7 +149,7 @@ def main(args):
             if not skip_normals:
                 # TODO actually get some normal models and don't do this hacky way
                 normal_pred = normal_model.predict({"metric3d_preds": pred, "images": image[None, :, : ,:], "frame_ids": torch.tensor([float(frame_id)])})
-                normals = normal_pred["normals"].squeeze().detach().cpu().numpy()
+                normals = normal_pred["normals"].squeeze().detach().to(torch.float16).cpu().numpy() # need to save as floats to not kill CPU
                 normals_vis = pred["normals_vis"].squeeze().detach().cpu().numpy()
 
                 np.save(normal_array_path, normals)
@@ -166,6 +168,7 @@ if __name__ == "__main__":
     parser.add_argument("--model", "-m", type=str, default="metric3d_vit", help="The model to get depth predictions. Currently only 'metric3d_vit' is implemented which gives both depth and normal predictions.")
     parser.add_argument("--normal_model", "-n", type=str, default="metric3d_vit", help="The model to get depth and normal predictions. Currently only 'metric3d_vit' is implemented which gives both depth and normal predictions.")
     parser.add_argument("--intrinsics", type=float, nargs=4, required=True, help="Camera intrinsics as [fx, fy, cx, cy]. Run '2_run_colmap.py' to get them. If you already have intrinsics, make sure to scale them with the same factor you are resizing your images (dividing image dimensions by 2 -> dividing intrinsic parameters by 2). Provide inputs as '--intrinsics fx fy cx cy'")
+    parser.add_argument("--skip_depths", action="store_true", help="Flag to skip saving depth predictions as numpy arrays. This is useful if you only want to save normals.")
     parser.add_argument("--skip_depth_png", action="store_true", help="Flag to skip saving scaled depth images as 16-bit unsigned integer monochrome png images. These images are useful for RGB-D SLAM.")
     parser.add_argument("--skip_mask_depth_png", action="store_true", help="Flag to skip using moveable object masks to set the depths of moveable objects to a very high value when saving depth png images. This is useful to ignore potentially moving objects by setting a hard depth limit on the RGB-D SLAM system")
     parser.add_argument("--skip_normals", action="store_true", help="Flag to skip predicting normals. Use this if your 'model' does not have normal prediction capabilities.")

@@ -7,7 +7,7 @@ from typing import NamedTuple
 
 from configs.data import PADDED_IMG_NAME_LENGTH
 from modules.core.reconstructors import ReconstructorFactory
-from modules.core.backprojection import Backprojector
+from modules.core.backprojection import Backprojector, DepthBasedDropoutBackprojector
 from modules.core.models import RAFT
 from modules.depth.models import Metric3Dv2, KITTI360DepthModel, PrecomputedDepthModel
 from modules.segmentation.models import SegFormer, MaskRCNN
@@ -45,6 +45,8 @@ def main(args):
     padded_img_name_length = args.padded_img_name_length
     start = args.start
     end = args.end
+    dropout_prob_min = args.dropout_prob_min
+    dropout_coeff = args.dropout_coeff
     debug = args.debug
 
     # TODO can probably abstract away this script preparation (logging and root_dir checking)
@@ -136,9 +138,12 @@ def main(args):
         pose_path = dataset.pose_path # GT poses
 
     # Get backprojector
-    backprojector_cfg = {"dropout": dropout, "max_d": max_d}
     if backprojector_type == "simple":
+        backprojector_cfg = {"dropout": dropout, "max_d": max_d}
         backprojector = Backprojector(backprojector_cfg, dataset.intrinsics)
+    elif backprojector_type == "depth_dropout":
+        backprojector_cfg = {"max_d": max_d,"dropout_prob_min": dropout_prob_min, "dropout_coeff": dropout_coeff}
+        backprojector = DepthBasedDropoutBackprojector(backprojector_cfg, dataset.intrinsics)
     else:
         raise NotImplementedError
 
@@ -183,7 +188,7 @@ if __name__=="__main__":
     parser.add_argument("--root_dir", "-r", type=str, required=True, help="Root directory of your dataset. Outputs will be saved at 'root_dir/reconstructions/...'")
     parser.add_argument("--recon_name", "-n", type=str, default=None, help="Name of the reconstruction. The results will be saved at 'root_dir/reconsturctions/xx_recon_name' where 'xx' is the numbering of the reconstruction.")
     parser.add_argument("--reconstructor", type=str, default="simple", choices=["simple", "moving_obj"], help="Reconstructor type")
-    parser.add_argument("--backprojector", type=str, default="simple", choices=["simple"], help="Backprojector type")
+    parser.add_argument("--backprojector", type=str, default="simple", choices=["simple", "depth_dropout"], help="Backprojector type")
     parser.add_argument("--dataset", type=str, default="colmap", choices=["colmap", "combined_colmap", "kitti360", "custom"], help="Dataset type")
     parser.add_argument("--pose_path", "-p", type=str, default=None, help="Absolute path to pose file")
     parser.add_argument("--pose_scale", type=float, default=1.0, help="Pose scale to multiply the poses")
@@ -211,6 +216,8 @@ if __name__=="__main__":
     parser.add_argument("--padded_img_name_length", type=int, default=PADDED_IMG_NAME_LENGTH, help="Total image name length. The integer frame id will be prepended with zeros until it reaches this length. For colmap datasets use 5, for KITTI use 6, for KITTI360 use 10")
     parser.add_argument("--start", type=int, default=0, help="Frame id to start the sequence")
     parser.add_argument("--end", type=int, default=-1, help="Frame id of the last frame in the sequence. Set as -1 to include all frames")
+    parser.add_argument("--dropout_prob_min", type=float, default=0.7, help="Minimum dropout probability applied to the smalles depths when doing depth-based dropout")
+    parser.add_argument("--dropout_coeff", type=float, default=0.4, help="Dropout coefficient to multiply the tanh function by when doing depth-based dropout")
 
     args = parser.parse_args()
     main(args)

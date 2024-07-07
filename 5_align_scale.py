@@ -53,7 +53,7 @@ def main(args):
     depth_dir = root_dir / Path("data/depths/arrays") # as .npy arrays
     image_dir = root_dir / Path("data/rgb") # as png files
 
-    if mask_moveables:
+    if mask_moveables and seg_model_type == "precomputed":
         mask_dir = root_dir / "data" / "masks_moveable"
         if not mask_dir.exists():
             raise ValueError(f"You specified '{str(mask_dir)}' as your mask directory but it does not exist. Please check your data!")
@@ -92,7 +92,7 @@ def main(args):
     # TODO again, can use a dataset factory to clean up code
     # Read poses and precomputed depths
     if dataset_type == "colmap":
-        dataset = ColmapDataset(colmap_dir, pose_scale=1, target_size=target_size, orig_intrinsics=intrinsics, depth_dir=depth_dir, start=start_id, end=end_id, mask_dir=mask_dir)
+        dataset = ColmapDataset(colmap_dir, pose_scale=1, target_size=target_size, orig_intrinsics=intrinsics, depth_dir=depth_dir, start=start_id, end=end_id, mask_dir=mask_dir, padded_img_name_length=padded_img_name_length)
         pose_path = dataset.pose_path
     if dataset_type == "combined_colmap":
         dataset = CombinedColmapDataset(colmap_dir, pose_scale=1, target_size=target_size, orig_intrinsics=intrinsics, depth_dir=depth_dir, start=start_id, end=end_id, mask_dir=mask_dir)
