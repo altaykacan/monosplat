@@ -158,7 +158,7 @@ def main(args):
     elif depth_model_type == "precomputed":
         depth_model = PrecomputedDepthModel(dataset)
 
-    # Create reconstructor and run it
+    # Create reconstructor and run it, essential components are used to initalize the factory
     factory = ReconstructorFactory(dataset, backprojector, depth_model)
     recon_config = {
         "batch_size": batch_size,

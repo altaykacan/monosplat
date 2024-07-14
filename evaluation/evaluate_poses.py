@@ -205,7 +205,7 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", "-o", type=str, default="./evaluation/eval_results", help="The directory where the logs and the outputs will be saved. Outputs are timestamped.")
     parser.add_argument("--dataset", type=str, help="Dataset format of the predicted pose files.")
     parser.add_argument("--ref_dataset", type=str, help="Dataset format of the ground truth/reference files.")
-    parser.add_argument("--align_scale", action="store_true", help="Flag to specify whether in addition to rotations and translations, a scale factor for alignment is computed.")
+    parser.add_argument("--align_scale", action="store_true", help="Flag to specify whether in addition to rotations and translations, a scale factor for alignment is computed (for RPE only a scale factor is computed).")
     parser.add_argument("--exp_name", type=str, default=None, help="Name of the experiment to add to the output directory")
 
     args = parser.parse_args()

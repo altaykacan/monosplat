@@ -138,7 +138,7 @@ class SimpleReconstructor(BaseReconstructor):
         else:
             normals_backproj = None
 
-        # TODO this is low priority, do it if you have time
+        # TODO this is low priority, do it if you have time (direct normal regularization for the road only)
         # If both models exist we save an additional boolean tensor marking the ground of the point cloud
         if (self.seg_model is not None) and (self.normal_model is not None):
             road_preds = self.seg_model.predict({"images": images, "classes_to_segment": ["road", "sidewalk"]})
@@ -156,7 +156,6 @@ class SimpleReconstructor(BaseReconstructor):
             self.logger.log_step(state={"ids": frame_ids, "depths": depths, "images": images})
 
 
-# TODO implement and debug, there is some mistake (truck wasn't removed completely) (probably max dists threshold is the issue)
 class MovingObjectRemoverReconstructor(SimpleReconstructor):
     def __init__(
             self,
@@ -358,6 +357,13 @@ class MovingObjectRemoverReconstructor(SimpleReconstructor):
 
 # TODO can extend this factory implementation and do it for other classes too
 class ReconstructorFactory():
+    """
+    Factory to create and return `Reconstructor` instances. The essential components
+    for all reconstructors (dataset, backprojector, and depth model) are needed
+    to initalize the factory itself. The optional bells and whistles for the
+    reconstructors can be specified in the `cfg` dictionary for the `get_reconstructor()`
+    method.
+    """
     def __init__(self, dataset: BaseDataset, backprojector: BaseBackprojector, depth_model: BaseModel) -> None:
         self.dataset = dataset
         self.backprojector = backprojector

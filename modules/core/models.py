@@ -1,13 +1,14 @@
 from typing import Dict, Tuple
 from pathlib import Path
 
-from modules.segmentation.models import SegmentationModel
-from modules.core.interfaces import BaseMap, BaseModel, BaseReconstructor, BaseBackprojector, BaseDataset
-
 import torch
 import numpy as np
 from PIL import Image
 from torchvision.transforms.functional import pil_to_tensor
+
+from modules.core.interfaces import BaseMap, BaseModel, BaseReconstructor, BaseBackprojector, BaseDataset
+from modules.depth.models import Metric3Dv2
+from modules.segmentation.models import SegmentationModel
 
 
 try:
@@ -152,6 +153,9 @@ class Metric3Dv2NormalModel(NormalModel):
     def __init__(self, metric3d_model: BaseModel):
         self.model = metric3d_model
 
+        if not isinstance(metric3d_model, Metric3Dv2):
+            raise ValueError("You cannot initialize a Metric3Dv2NormalModel without a Metric3Dv2 model!")
+
         if "vit" not in metric3d_model._backbone:
             raise ValueError(f"To use normal predictions with Metric3D you need to use a ViT backbone! Current backbone is: {metric3d_model._backbone}")
 
@@ -171,7 +175,6 @@ class Metric3Dv2NormalModel(NormalModel):
         return {"normals": normals, "normals_vis": normals_vis}
 
 
-# TODO implement
 class PrecomputedNormalModel(NormalModel):
     """
     Dummy normal model that loads in precomputed normals from `3_precompute_depths_and_normals.py`

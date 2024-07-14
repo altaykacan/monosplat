@@ -264,9 +264,12 @@ def read_all_poses_and_stamps(pose_path: Union[Path, str], dataset: str = "custo
         stamps = [s for s in range(len(stamps))]
 
     # Sort the poses and stamps in increasing order
-    zipped = sorted(zip(stamps, poses))
-    poses = [pair[1] for pair in zipped]
-    stamps = [pair[0] for pair in zipped]
+    try:
+        zipped = sorted(zip(stamps, poses))
+        poses = [pair[1] for pair in zipped]
+        stamps = [pair[0] for pair in zipped]
+    except RuntimeError as E:
+        log.warning(f"Encountered exception {E} when trying to sort the poses. Not sorting them...")
 
     poses = torch.stack(poses, dim=0)
 

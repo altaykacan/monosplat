@@ -5,13 +5,18 @@ from typing import List, Union, Tuple
 import torch
 import numpy as np
 import open3d as o3d
+from PIL import Image
+from torchvision.transforms.functional import pil_to_tensor
 from tqdm import tqdm
 
+from modules.core.interfaces import BaseDataset
 from modules.core.utils import format_intrinsics
-from modules.io.datasets import ColmapDataset
+from modules.io.datasets import ColmapDataset, KITTI360Dataset
 from modules.io.utils import read_ply, read_ply_o3d, save_image_torch
 from modules.scale_alignment.utils import project_pcd_o3d
 from modules.scale_alignment.visualization import save_scale_plot, save_histogram
+from modules.segmentation.models import SegFormer, PrecomputedSegModel
+from modules.segmentation.utils import combine_segmentation_masks
 
 log = logging.getLogger(__name__)
 
@@ -131,14 +136,12 @@ def least_squares_scale_and_shift(
 
 
 def do_sparse_alignment(
-        poses: torch.Tensor,
-        stamps: List[int],
+        dataset: BaseDataset,
         sparse_cloud_path: Union[Path, str],
-        depth_paths: List[Path],
-        intrinsics: List[float],
-        ignore_masks: torch.Tensor = None,
+        depth_type: str = "precomputed",
         min_d: float = 0.0,
         max_d: float = 30.0,
+        seg_model_type: str = None,
         log_dir: Path = Path("./alignment_plots"),
         return_only_scale: bool = True,
         ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -157,6 +160,15 @@ def do_sparse_alignment(
     if sparse_cloud_path is None:
         raise ValueError("You need to specify the path to a sparse reconstruction to align scales with if you want to use 'sparse' alignment.")
 
+    poses = dataset.poses
+    stamps = dataset.frame_ids
+    intrinsics = dataset.intrinsics
+
+    if isinstance(dataset, KITTI360Dataset) and depth_type == "gt":
+        depth_paths = dataset.gt_depth_paths
+    elif depth_type == "precomputed":
+        depth_paths = dataset.depth_paths
+
     # Read in the sparse cloud
     if sparse_cloud_path.name == "points3D.txt":
         pcd = ColmapDataset.read_colmap_pcd_o3d(sparse_cloud_path, convert_to_float32=True)
@@ -173,12 +185,10 @@ def do_sparse_alignment(
         dense_depths.append(depth)
 
     dense_depths = torch.stack(dense_depths, dim=0).float() # [num_frames, H, W]
+    device = dense_depths.device
 
     # Do some setup with the read-in depth information
     _, H, W = dense_depths.shape
-    if ignore_masks is None:
-        ignore_masks = torch.zeros_like(dense_depths)
-
     K = format_intrinsics(intrinsics) # [3, 3]
 
     # Get sparse depths for each posed frame from sparse cloud
@@ -195,7 +205,32 @@ def do_sparse_alignment(
 
         sparse_depths.append(sparse_depth.squeeze())
 
-    sparse_depths = torch.stack(sparse_depths, dim=0) # [num_frames, H, W]
+    sparse_depths = torch.stack(sparse_depths, dim=0).to(device) # [num_frames, H, W]
+
+    # TODO implement
+    # Get masks to ignore movable objects if specified
+    if seg_model_type is not None:
+        ignore_masks = []
+        if seg_model_type == "precomputed":
+            seg_model = PrecomputedSegModel(dataset)
+            seg_classes = [] # just reads in the already computed masks
+        elif seg_model_type == "predict":
+            seg_model = SegFormer()
+            seg_classes = ["car", "bus", "person", "truck", "bicycle", "motorcycle", "rider"]
+
+        log.info("Getting segmentation masks for sparse scale alignment, this might take some time...")
+        for frame_id, image, _ in tqdm(dataset):
+            seg_pred = seg_model.predict({
+                        "images": image.unsqueeze(0),
+                        "classes_to_segment": seg_classes,
+                        "frame_ids": [frame_id]
+                        })
+            seg_masks = combine_segmentation_masks(seg_pred["masks_dict"], seg_classes)
+            ignore_masks.append(seg_masks) # appending [1, 1, H, W] mask
+
+        ignore_masks = torch.cat(ignore_masks, dim=0).squeeze(1).to(device) # [N, H, W]
+    else:
+        ignore_masks = torch.zeros_like(dense_depths)
 
     # Compute alignment
     mask = (sparse_depths > 0.01) & (dense_depths > min_d) & (dense_depths < max_d) & torch.logical_not(ignore_masks)

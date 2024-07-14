@@ -25,13 +25,14 @@ log = logging.getLogger(__name__)
 def do_dense_alignment(
     dataset: BaseDataset,
     flow_steps: List[int],
-    t_z_thresh: float = 0.5,
+    t_z_thresh: float = 0.2, # was 0.5 before when we used it for ds01 and kitti360_0_mini
     min_d: float = 0.0,
     max_d: float = 50.0,
     min_flow: float = 0.2,
     mask_moveable_objects: bool = True,
     seg_model_type: str = "predict",
     mask_occlusions: bool = True,
+    mask_disocclusions: bool = False,
     log_dir: Path = Path("./alignment_plots"),
     frame_idx_for_hist: int = 8,
     log_every: int = 50,
@@ -127,6 +128,7 @@ def do_dense_alignment(
                 target_vid_id = str(target_id)[0] # first digit is video id
                 source_vid_id  = str(source_id)[0]
 
+                # We don't want to compare frame pairs from different videos
                 if target_vid_id != source_vid_id:
                     log.info(f"Reached the end of the current sub-trajectory while doing dense scale alignment, moving on to the next video")
                     continue
@@ -164,6 +166,7 @@ def do_dense_alignment(
                                                 max_d,
                                                 min_flow,
                                                 mask_occlusions,
+                                                mask_disocclusions,
                                             )
 
             curr_scale_rev, vis_tensor2, t_z_rev = align_scale_for_image_pair(
@@ -181,6 +184,7 @@ def do_dense_alignment(
                                                 max_d,
                                                 min_flow,
                                                 mask_occlusions,
+                                                mask_disocclusions,
                                             )
 
             if i % log_every == 0:
@@ -218,8 +222,9 @@ def do_dense_alignment(
 
         # Save the mean of the scales to log
         mean_of_means = torch.tensor(list(scales[flow_step].values())).mean()
+        std_of_means = torch.tensor(list(scales[flow_step].values())).std()
         log.info("===============")
-        log.info(f"FINISHED FLOW STEP {flow_step}, MEAN OF CLEANED SCALES: {mean_of_means:0.4f}")
+        log.info(f"FINISHED FLOW STEP {flow_step}, MEAN OF CLEANED SCALES: {mean_of_means:0.4f}, STANDARD DEV: {std_of_means:0.4f}")
         log.info("===============")
 
     plot_dense_alignment_results(
@@ -254,7 +259,8 @@ def align_scale_for_image_pair(
     min_depth: float = 0.0,
     max_depth: float = 100.0,
     min_flow: float = 0.2,
-    mask_occlusions: bool = True
+    mask_occlusions: bool = True,
+    mask_disocclusions: bool = False,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Aligns the scale of a depth model and the poses using a target and a source
@@ -277,7 +283,7 @@ def align_scale_for_image_pair(
         })
     flow = flow_pred["flow"] # [N, 2, H, W]
 
-    if mask_occlusions:
+    if mask_occlusions or mask_disocclusions:
         reverse_flow_output = flow_model.predict({
             "image_a": source_image[None, :, :, :],
             "image_b": target_image[None, :, :, :],
@@ -286,7 +292,12 @@ def align_scale_for_image_pair(
 
         # Occluded (respectively disoccluded) parts are False in the masks, we want the opposite
         occlusion_mask, disocclusion_mask = compute_occlusions(flow, reverse_flow)
-        target_mask = target_mask | torch.logical_not(occlusion_mask)
+
+        if mask_occlusions:
+            target_mask = target_mask | torch.logical_not(occlusion_mask)
+
+        if mask_disocclusions:
+            target_mask = target_mask | torch.logical_not(disocclusion_mask)
 
     # Define coordinate grids, pixel coords
     U, V = torch.meshgrid((torch.arange(W), torch.arange(H)), indexing="xy")
@@ -326,9 +337,7 @@ def align_scale_for_image_pair(
     # Given a correspondence in pixel coordinates from (i, j) in depth_a to (i', j') in depth_b_prime
     # depth_corr is a [1, 1, H , W] tensor where each position (1, 1, i, j) gives the
     # depth_b_prime value at (i', j') that corresponds to the (i, j) value in depth_a
-    depth_corr = F.grid_sample(
-        depth_b_prime, grid, mode="bilinear", padding_mode="zeros", align_corners=True
-    )
+    depth_corr = F.grid_sample(depth_b_prime, grid, mode="bilinear", padding_mode="zeros", align_corners=True)
 
     # Get mask of pixels to ignore in scale computation
     if target_mask is not None:

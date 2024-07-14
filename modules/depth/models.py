@@ -69,6 +69,7 @@ class Metric3Dv2(DepthModel):
 
     def load(self):
         # TODO implement own wrapper just in case torch hub is not available
+        # we did it for Metric3D in the previous repository
         if self._model is None:
             if self._backbone == "vit_giant":
                 self._model = torch.hub.load('yvanyin/metric3d', 'metric3d_vit_giant2', pretrain=True)

@@ -9,17 +9,17 @@ from modules.io.datasets import KITTI360Dataset
 from modules.depth.models import KITTI360DepthModel, Metric3Dv2
 from modules.io.utils import save_image_torch
 
-dataset = KITTI360Dataset(0, 0, start=300, end=500)
+dataset = KITTI360Dataset(0, 0, start=300, end=900)
 gt = KITTI360DepthModel(dataset)
 model = Metric3Dv2(dataset.intrinsics, backbone="convnext")
 
-frames = [391, 394, 399]
+frames = [391, 394, 399, 846]
 images = []
 
 # Frame ids don't match the indices from the dataset (not all frames have poses)
 for frame in frames:
     idx = dataset.frame_ids.index(frame)
-    image, pose = dataset[idx]
+    frame_id, image, pose = dataset[idx]
     images.append(image)
 
 images = torch.stack(images, dim=0) # batched tensors

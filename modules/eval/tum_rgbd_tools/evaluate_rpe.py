@@ -284,8 +284,7 @@ def evaluate_trajectory_rpe(traj_gt,traj_est,param_max_pairs=10000,param_fixed_d
            abs(stamp_gt_1 - (stamp_est_1 + param_offset)) > gt_max_time_difference):
             continue
 
-        error44 = ominus(  scale(
-                           ominus( traj_est[stamp_est_1], traj_est[stamp_est_0] ),param_scale),
+        error44 = ominus(  scale(ominus( traj_est[stamp_est_1], traj_est[stamp_est_0] ),param_scale),
                            ominus( traj_gt[stamp_gt_1], traj_gt[stamp_gt_0] ) )
 
         trans = compute_distance(error44)

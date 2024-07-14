@@ -1,7 +1,7 @@
 """Contains dataset implementations that store data related information and can be iterated over"""
 import logging
 from pathlib import Path
-from typing import Union, Tuple, List, Callable
+from typing import Union, Tuple, List, Callable, Optional
 
 import torch
 import numpy as np
@@ -31,11 +31,11 @@ class CustomDataset(BaseDataset):
             orig_intrinsics: Tuple,
             orig_size: Tuple = (),
             target_size: Tuple = (),
-            gt_depth_dir: Union[Path, str] = None,
-            depth_dir: Union[Path, str] = None,
-            scales_and_shifts_path: Union[Path, str] = None,
-            depth_scale: float = None,
-            mask_dir: Union[Path, str] = None,
+            gt_depth_dir: Optional[Union[Path, str]] = None,
+            depth_dir: Optional[Union[Path, str]] = None,
+            scales_and_shifts_path: Optional[Union[Path, str]] = None,
+            depth_scale: Optional[float] = None,
+            mask_dir: Optional[Union[Path, str]] = None,
             start: int = None,
             end: int = -1,
             device: str = None,

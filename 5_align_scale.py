@@ -29,8 +29,9 @@ def main(args):
     alignment_type = args.alignment_type.lower()
     sparse_cloud_path = Path(args.sparse_cloud_path) if args.sparse_cloud_path is not None else None
     mask_moveables = not args.skip_mask_moveables
-    seg_model_type = args.seg_model_type
+    seg_model_type = args.seg_model_type if args.seg_model_type != "none" else None
     mask_occlusions = not args.skip_mask_occlusions
+    mask_disocclusions= args.mask_disocclusions
     flow_steps = args.flow_steps
     max_d = args.max_d
     cam_id = args.kitti360_cam_id
@@ -115,21 +116,21 @@ def main(args):
             logging.warning(f"The directory '{str(log_dir)}' is not empty. Aborting.")
             return -1
 
+        # By default we only compute scales, shift factors are all 0
+        scales, shifts = do_sparse_alignment(
+            dataset,
+            sparse_cloud_path,
+            depth_type,
+            max_d=max_d,
+            seg_model_type=seg_model_type,
+            log_dir=log_dir,
+            )
         if isinstance(dataset, KITTI360Dataset) and depth_type == "gt":
             depth_paths = dataset.gt_depth_paths
-        elif depth_type == "precomputed":
+        elif isinstance(dataset, KITTI360Dataset) and depth_type == "precomputed":
             depth_paths = dataset.depth_paths
-
-        # By default we only compute only scales, shift factors are all 0
-        scales, shifts = do_sparse_alignment(
-            dataset.poses,
-            dataset.frame_ids,
-            sparse_cloud_path,
-            depth_paths,
-            dataset.intrinsics,
-            log_dir=log_dir,
-            max_d=max_d,
-            )
+        else:
+            depth_paths = dataset.depth_paths
 
         create_scales_and_shifts_txt(depth_paths, scales, shifts, pose_path, dataset.frame_ids)
 
@@ -151,6 +152,7 @@ def main(args):
             mask_moveable_objects=mask_moveables,
             seg_model_type=seg_model_type,
             mask_occlusions=mask_occlusions,
+            mask_disocclusions=mask_disocclusions,
             log_dir=log_dir,
             max_d=max_d,
             debug=debug,
@@ -185,8 +187,9 @@ if __name__ == "__main__":
     parser.add_argument("--target_size", type=int, nargs=2, default=(), help="The target (H, W) to resize the images to. Leave empty to use the original image sizes from extracted frames. Provide input as '--target_size H W'")
     parser.add_argument("--dataset", type=str, default="custom", help="Dataset type to use. Choose either 'colmap', 'combined_colmap', 'custom' or 'kitti360'. If you choose 'kitti360' the ground truth poses and depths will be used and you need to provide '--cam_id' and '--seq_id' options. This is useful to validate the scale alignment methods.")
     parser.add_argument("--skip_mask_moveables", action="store_true", help="Flag to SKIP masking pixels belonging moveable objects. Not relevant for sparse alignment")
-    parser.add_argument("--seg_model_type", type=str, default="predict", choices=["predict", "precomputed"], help="The type of segmentation model you want to use for dense scale alignment. Give either 'predict' or 'precomputed'. Only relevant for '--alignment_type dense'")
+    parser.add_argument("--seg_model_type", type=str, default="precomputed", choices=["predict", "precomputed", "none"], help="The type of segmentation model you want to use for dense scale alignment. Give either 'predict' or 'precomputed'. Only relevant for '--alignment_type dense'")
     parser.add_argument("--skip_mask_occlusions", action="store_true", help="Flag to SKIP masking pixels in occluded regions. Not relevant for sparse alignment.")
+    parser.add_argument("--mask_disocclusions", action="store_true", help="Flag to mask pixels in disoccluded regions. Not relevant for sparse alignment.")
     parser.add_argument("--flow_steps", type=int, nargs="+", default=[2, 4, 6], help="Step sizes for computing optical flow. Dense scale alignment is done for each of the integers you provide and the scale factors are averaged. Provide input as '--flow_step 1 2 3 ...'.")
     parser.add_argument("--max_d", type=float, default=30.0, help="Maximum depth to use for scale alignment")
     parser.add_argument("--start_id", type=int, default=0, help="The first id to take from the dataset of your choice. Useful for validating with mini datasets.")

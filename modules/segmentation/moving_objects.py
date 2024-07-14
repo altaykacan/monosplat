@@ -115,91 +115,92 @@ def compute_dists(
     return dists
 
 
-def segment_moving_objects(
-    mask_moveable_a: torch.Tensor,
-    mask_moveable_b: torch.Tensor,
-    depth_a: torch.Tensor,
-    depth_b: torch.Tensor,
-    pose_a: torch.Tensor,
-    pose_b: torch.Tensor,
-    forward_flow: torch.Tensor,
-    intrinsics: List,
-    instance_masks: List,
-    max_d: float = 50.0,
-    min_flow: float = 0.0,
-    delta_thresh: float = 1.75,
-    percentage_thresh: float = 0.80,
-    tracking_percentage_thresh: float = 0.80,
-    prev_mask_moving: torch.Tensor = None,
-    output_dir: Path = None,
-    image_id: str = None,
-    occlusion_mask: torch.Tensor = None,
-    disocclusion_mask: torch.Tensor = None,
-    debug: bool = False,
-    original_image: torch.Tensor = None, # for debug purposes
-):
-    # TODO implement
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    N, _, H, W = depth_a.shape  # [N, 3, H, W] tensor
+# NOT USED
+# def segment_moving_objects(
+#     mask_moveable_a: torch.Tensor,
+#     mask_moveable_b: torch.Tensor,
+#     depth_a: torch.Tensor,
+#     depth_b: torch.Tensor,
+#     pose_a: torch.Tensor,
+#     pose_b: torch.Tensor,
+#     forward_flow: torch.Tensor,
+#     intrinsics: List,
+#     instance_masks: List,
+#     max_d: float = 50.0,
+#     min_flow: float = 0.0,
+#     delta_thresh: float = 1.75,
+#     percentage_thresh: float = 0.80,
+#     tracking_percentage_thresh: float = 0.80,
+#     prev_mask_moving: torch.Tensor = None,
+#     output_dir: Path = None,
+#     image_id: str = None,
+#     occlusion_mask: torch.Tensor = None,
+#     disocclusion_mask: torch.Tensor = None,
+#     debug: bool = False,
+#     original_image: torch.Tensor = None, # for debug purposes
+# ):
+#     # TODO implement
+#     device = "cuda" if torch.cuda.is_available() else "cpu"
+#     N, _, H, W = depth_a.shape  # [N, 3, H, W] tensor
 
-    # TODO implement
-    assert N == 1, "Moving object masking not implemented for batched inputs properly, please pass a single image!"
+#     # TODO implement
+#     assert N == 1, "Moving object masking not implemented for batched inputs properly, please pass a single image!"
 
-    # Useful for plotting the flows
-    if original_image is not None:
-        original_image = original_image.to(device)
+#     # Useful for plotting the flows
+#     if original_image is not None:
+#         original_image = original_image.to(device)
 
-    # dists has the same shape as depths [N, 1, H, W]
-    dists = compute_dists(depth_a, depth_b, pose_a, pose_b, forward_flow, intrinsics, min_flow, occlusion_mask)
-    dists[dists == torch.inf] = 0
+#     # dists has the same shape as depths [N, 1, H, W]
+#     dists = compute_dists(depth_a, depth_b, pose_a, pose_b, forward_flow, intrinsics, min_flow, occlusion_mask)
+#     dists[dists == torch.inf] = 0
 
-    # Auxilary tensor to only consider pixels from dists below the depth threshold to include in the mean computation
-    dists_aux = dists.clone()
+#     # Auxilary tensor to only consider pixels from dists below the depth threshold to include in the mean computation
+#     dists_aux = dists.clone()
 
-    # Both depth_a and max_d are with the depth model scale
-    dists_aux[depth_a > max_d] = 0
+#     # Both depth_a and max_d are with the depth model scale
+#     dists_aux[depth_a > max_d] = 0
 
-    # Getting the mean of all non-zero elements below max_d
-    dists_avg = torch.mean(dists[dists_aux.nonzero(as_tuple=True)])
-    dists_avg_mask = dists > (dists_avg * delta_thresh) # will be compared with instance masks
-    mask = torch.zeros_like(depth_a, dtype=bool)
+#     # Getting the mean of all non-zero elements below max_d
+#     dists_avg = torch.mean(dists[dists_aux.nonzero(as_tuple=True)])
+#     dists_avg_mask = dists > (dists_avg * delta_thresh) # will be compared with instance masks
+#     mask = torch.zeros_like(depth_a, dtype=bool)
 
-    for i, instance_mask in enumerate(instance_masks):
-        instance_mask_size = instance_mask.sum() # pixel count for current group
-        intersection_size = (dists_avg_mask & instance_mask).sum()
+#     for i, instance_mask in enumerate(instance_masks):
+#         instance_mask_size = instance_mask.sum() # pixel count for current group
+#         intersection_size = (dists_avg_mask & instance_mask).sum()
 
-        if prev_mask_moving is not None:
-            intersection_prev_size = (prev_mask_moving & instance_mask).sum()
+#         if prev_mask_moving is not None:
+#             intersection_prev_size = (prev_mask_moving & instance_mask).sum()
 
-        # If the instance mask and the dists_mask agree, take the whole instance as a moving object
-        if (intersection_size / instance_mask_size) > percentage_thresh:
-            mask = torch.logical_or(instance_mask & mask_moveable_a, mask)
+#         # If the instance mask and the dists_mask agree, take the whole instance as a moving object
+#         if (intersection_size / instance_mask_size) > percentage_thresh:
+#             mask = torch.logical_or(instance_mask & mask_moveable_a, mask)
 
-        # If the instance mask intersects the previous moving object mask above a threshold, we take it as moving object too
-        if prev_mask_moving is not None and (intersection_prev_size / instance_mask_size) > tracking_percentage_thresh:
-            mask = torch.logical_or(instance_mask & mask_moveable_a, mask)
+#         # If the instance mask intersects the previous moving object mask above a threshold, we take it as moving object too
+#         if prev_mask_moving is not None and (intersection_prev_size / instance_mask_size) > tracking_percentage_thresh:
+#             mask = torch.logical_or(instance_mask & mask_moveable_a, mask)
 
-        if debug:
-            plt.imsave(f"{str(output_dir)}/{image_id}_debug_10_instance_{i}.png", (instance_mask * original_image).squeeze().permute(1,2,0).cpu().numpy())
+#         if debug:
+#             plt.imsave(f"{str(output_dir)}/{image_id}_debug_10_instance_{i}.png", (instance_mask * original_image).squeeze().permute(1,2,0).cpu().numpy())
 
-    if debug:
-        dists_mask = dists > delta_thresh  # just here for debug and comparison
-        plt.imsave(f"{str(output_dir)}/{image_id}_debug_01_depth_a.png", (1/depth_a).squeeze().cpu().numpy())
-        plt.imsave(f"{str(output_dir)}/{image_id}_debug_02_depth_b.png", (1/depth_b).squeeze().cpu().numpy())
-        plt.imsave(f"{str(output_dir)}/{image_id}_debug_03_dists_naive_threshold.png", dists_mask.squeeze().cpu().numpy())
-        plt.imsave(f"{str(output_dir)}/{image_id}_debug_04_dists_values.png", dists.squeeze().cpu().numpy())
-        plt.imsave(f"{str(output_dir)}/{image_id}_debug_04_dists_inv_values.png", (1/(dists + 0.0001)).squeeze().clamp(0, 10).cpu().numpy()) # dists should be greater than 0.1
-        plt.imsave(f"{str(output_dir)}/{image_id}_debug_05_dists_avg_mask.png", (dists_avg_mask).squeeze().cpu().numpy())
-        plt.imsave(f"{str(output_dir)}/{image_id}_debug_06_dists_avg_values_masked.png", (dists * dists_avg_mask).squeeze().cpu().numpy())
-        plt.imsave(f"{str(output_dir)}/{image_id}_debug_06_dists_avg_values_used.png", (dists_aux).squeeze().cpu().numpy())
-        visualize_flow(forward_flow, original_image, output_path=f"{str(output_dir)}/{image_id}_debug_07_forward_flow")
+#     if debug:
+#         dists_mask = dists > delta_thresh  # just here for debug and comparison
+#         plt.imsave(f"{str(output_dir)}/{image_id}_debug_01_depth_a.png", (1/depth_a).squeeze().cpu().numpy())
+#         plt.imsave(f"{str(output_dir)}/{image_id}_debug_02_depth_b.png", (1/depth_b).squeeze().cpu().numpy())
+#         plt.imsave(f"{str(output_dir)}/{image_id}_debug_03_dists_naive_threshold.png", dists_mask.squeeze().cpu().numpy())
+#         plt.imsave(f"{str(output_dir)}/{image_id}_debug_04_dists_values.png", dists.squeeze().cpu().numpy())
+#         plt.imsave(f"{str(output_dir)}/{image_id}_debug_04_dists_inv_values.png", (1/(dists + 0.0001)).squeeze().clamp(0, 10).cpu().numpy()) # dists should be greater than 0.1
+#         plt.imsave(f"{str(output_dir)}/{image_id}_debug_05_dists_avg_mask.png", (dists_avg_mask).squeeze().cpu().numpy())
+#         plt.imsave(f"{str(output_dir)}/{image_id}_debug_06_dists_avg_values_masked.png", (dists * dists_avg_mask).squeeze().cpu().numpy())
+#         plt.imsave(f"{str(output_dir)}/{image_id}_debug_06_dists_avg_values_used.png", (dists_aux).squeeze().cpu().numpy())
+#         visualize_flow(forward_flow, original_image, output_path=f"{str(output_dir)}/{image_id}_debug_07_forward_flow")
 
-        if occlusion_mask is not None:
-            plt.imsave(f"{str(output_dir)}/{image_id}_debug_08_occlusion_mask.png", (occlusion_mask * original_image).squeeze().permute(1,2,0).cpu().numpy())
+#         if occlusion_mask is not None:
+#             plt.imsave(f"{str(output_dir)}/{image_id}_debug_08_occlusion_mask.png", (occlusion_mask * original_image).squeeze().permute(1,2,0).cpu().numpy())
 
-        if disocclusion_mask is not None:
-            plt.imsave(f"{str(output_dir)}/{image_id}_debug_08_disocclusion_mask.png", (disocclusion_mask * original_image).squeeze().permute(1,2,0).cpu().numpy())
+#         if disocclusion_mask is not None:
+#             plt.imsave(f"{str(output_dir)}/{image_id}_debug_08_disocclusion_mask.png", (disocclusion_mask * original_image).squeeze().permute(1,2,0).cpu().numpy())
 
-        plt.imsave(f"{str(output_dir)}/{image_id}_debug_09_prev_moving_mask.png", (prev_mask_moving * original_image).squeeze().permute(1,2,0).cpu().numpy())
+#         plt.imsave(f"{str(output_dir)}/{image_id}_debug_09_prev_moving_mask.png", (prev_mask_moving * original_image).squeeze().permute(1,2,0).cpu().numpy())
 
-    return mask
+#     return mask

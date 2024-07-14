@@ -141,6 +141,23 @@ def compute_occlusions(flow0: torch.Tensor, flow1: torch.Tensor) -> Tuple[torch.
     visible in image 1 (disocclusion mask).
 
     Code provided by Felix Wimbauer (https://github.com/Brummi)
+
+    Indexing logic for `mask0` and `mask1`
+    - The first dimension of mask0 is indexed with nxy_1[:, 0, :].long(),
+    which represents the batch indices. This ensures that the operation is
+    applied to the correct element in the batch.
+    - The second dimension is hardcoded to 0 because mask0 is prepared to have
+    a single channel, and this operation is intended to fill in this channel.
+    - The third dimension (height) is indexed with
+    ((nxy_1[:, 2, :] * .5 + .5) * h).round().long().clamp(0, h-1).
+    This expression takes the y-coordinates from nxy_1 (after reverse flow adjustment),
+    normalizes them to the range [0, h-1], rounds them to the nearest integer,
+    and clamps the values to ensure they are within the valid range of
+    indices for the height dimension.
+    - The fourth dimension (width) is indexed similarly but uses the
+    x-coordinates from nxy_1: ((nxy_1[:, 1, :] * .5 + .5) * w).round().long().clamp(0, w-1).
+    This normalizes the x-coordinates to the range [0, w-1] (where w is the
+    width of the image), rounds, and clamps them.
     """
     n, _, h, w = flow0.shape
     device = flow0.device
@@ -151,17 +168,16 @@ def compute_occlusions(flow0: torch.Tensor, flow1: torch.Tensor) -> Tuple[torch.
     flow0_r = torch.cat((flow0[:, 0:1, :, :] * 2 / w , flow0[:, 1:2, :, :] * 2 / h), dim=1) # flow in normalized pixel coordinates
     flow1_r = torch.cat((flow1[:, 0:1, :, :] * 2 / w , flow1[:, 1:2, :, :] * 2 / h), dim=1)
 
-    xy_0 = xy + flow0_r # new normalized coordinates after applying flow
-    xy_1 = xy + flow1_r
+    xy_0 = xy + flow0_r # new normalized coordinates after applying forward flow
+    xy_1 = xy + flow1_r # after applying reverse flow
 
     xy_0 = xy_0.view(n, 2, -1) # [n, 2, num_pixels]
     xy_1 = xy_1.view(n, 2, -1) # [n, 2, num_pixels]
 
-    ns = torch.arange(n, device=device, dtype=xy_0.dtype)
-    nxy_0 = torch.cat((ns.view(n, 1, 1).expand(-1, 1, xy_0.shape[-1]), xy_0), dim=1)
+    ns = torch.arange(n, device=device, dtype=xy_0.dtype) # batches, [0, 1, 2, ..., n-1]
+    nxy_0 = torch.cat((ns.view(n, 1, 1).expand(-1, 1, xy_0.shape[-1]), xy_0), dim=1) # additional number for batch idx [n, 3, num_points]
     nxy_1 = torch.cat((ns.view(n, 1, 1).expand(-1, 1, xy_1.shape[-1]), xy_1), dim=1)
 
-    # Set the values at transformed coordinates to 1 (zeros are where there has been no flow)
     mask0 = torch.zeros_like(flow0[:, :1, :, :])
     mask0[nxy_1[:, 0, :].long(), 0, ((nxy_1[:, 2, :] * .5 + .5) * h).round().long().clamp(0, h-1), ((nxy_1[:, 1, :] * .5 + .5) * w).round().long().clamp(0, w-1)] = 1
 

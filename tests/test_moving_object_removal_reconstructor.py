@@ -27,7 +27,7 @@ dataset = KITTIDataset(
     target_size,
     depth_scale=1.0,
     depth_dir="/usr/stud/kaa/data/root/kitti07/data/depths/arrays",
-    start=635,
+    start=860,
     end=-1,
     )
 
