@@ -121,24 +121,23 @@ class SimpleReconstructor(BaseReconstructor):
             )
 
         if self.seg_model is not None:
-            seg_preds = self.seg_model.predict({"images": images, "classes_to_segment": self.classes_to_remove})
+            seg_preds = self.seg_model.predict({"images": images, "frame_ids": frame_ids, "classes_to_segment": self.classes_to_remove})
             masks_dict = seg_preds["masks_dict"]
             semantic_masks = combine_segmentation_masks(masks_dict)
-            semantic_masks = torch.logical_not(semantic_masks) # we want moveables to be False
+            semantic_masks = torch.logical_not(semantic_masks) # we want movables to be False
             masks_backproj = masks_backproj &  semantic_masks
 
         if self.normal_model is not None:
             normal_preds = self.normal_model.predict({"metric3d_preds": depth_preds, "images": images, "frame_ids": frame_ids})
             normals = normal_preds["normals"] # [N, 3, H, W]
 
-            # Normals are in camera frame, need to rotate to world frame
+            # Normals are in camera frame, need to rotate to world frame to save in map
             R_WC = poses[:, :3, :3] # [N, 3, 3]
             normals = torch.bmm(R_WC, normals.view(N, 3, -1)).reshape(N, 3, H, W)
             _, normals_backproj = self.backprojector.backproject(normals, depths, poses, masks_backproj)
         else:
             normals_backproj = None
 
-        # TODO this is low priority, do it if you have time (direct normal regularization for the road only)
         # If both models exist we save an additional boolean tensor marking the ground of the point cloud
         if (self.seg_model is not None) and (self.normal_model is not None):
             road_preds = self.seg_model.predict({"images": images, "classes_to_segment": ["road", "sidewalk"]})

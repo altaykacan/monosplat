@@ -1,3 +1,7 @@
+"""
+This is the script that calls the modified training scripts from the 3D Gaussian
+Splatting submodule.
+"""
 import sys
 import json
 import logging
@@ -86,6 +90,7 @@ def main(args, extra_args):
     subprocess.run(command, check=True)
 
     print("Done!")
+
 
 if __name__ == "__main__":
     parser = ArgumentParser(description="Train a gaussian splatting model using the 'train.py' script in './submodules/gaussian-splatting'")

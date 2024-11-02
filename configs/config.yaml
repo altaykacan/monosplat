@@ -5,10 +5,29 @@ defaults:
   - splatting: slam
 
 
+dataset_name: ""
 exp_name: "debug"
-video_path: ""
-extract_frames: False
-run_colmap: False
-precomputation: 
+
+extract_frames:
+  skip: False
+  video_path: ""
+
+colmap:
+  skip: False
+
+precomputation:
   depth: True
   normal: True
+
+pose_estimation:
+  skip: True # not implemented yet, please provide estimated poses
+
+scale_alignment:
+  skip: False
+
+create_pointcloud:
+  skip: False
+
+train_gaussians:
+  skip: False
+

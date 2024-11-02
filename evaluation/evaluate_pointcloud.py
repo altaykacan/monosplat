@@ -1,6 +1,6 @@
 """
 A script to compute standard metrics for an estimated pointcloud and a
-reference ground truth point cloud (or mesh). Uses poses to align the
+reference ground truth point cloud. Uses poses to align the
 coordinate frames of the two clouds. An alternative is to use some global
 registration algorithm to get a rough alignment between the point clouds.
 Using poses to align the coordinate frames is much more scalable for

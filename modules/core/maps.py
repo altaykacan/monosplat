@@ -1,7 +1,7 @@
 """Has implementations of standard map classes for the framework"""
 from pathlib import Path
 import logging
-from typing import Dict, Union
+from typing import Dict, Union, Optional
 
 import torch
 import numpy as np
@@ -23,11 +23,11 @@ class PointCloud(BaseMap):
     Points mapped to `[0,0,0]` are ignored.
     """
     def __init__(self, scale: float = 1.0):
-        self.xyz = None # all saved as [3, num_points] tensors
-        self.rgb = None
-        self.normals = None
-        self.is_road = None
-        self.scale = scale
+        self.xyz: Optional[torch.Tensor] = None # all saved as [3, num_points] tensors
+        self.rgb: Optional[torch.Tensor] = None
+        self.normals: Optional[torch.Tensor] = None
+        self.is_road: Optional[torch.Tensor]  = None
+        self.scale: Optional[float] = scale
 
     @property
     def num_points(self):
@@ -49,10 +49,16 @@ class PointCloud(BaseMap):
         return self.normals is not None
 
     @property
-    def has_road_flag(self):
+    def has_road(self):
         return self.is_road is not None
 
-    def increment(self, xyz: torch.Tensor, rgb: torch.Tensor = None, normals: torch.Tensor = None, is_road: torch.Tensor=None) -> None:
+    def increment(
+            self,
+            xyz: torch.Tensor,
+            rgb: Optional[torch.Tensor] = None,
+            normals: Optional[torch.Tensor] = None,
+            is_road: Optional[torch.Tensor] = None
+            ) -> None:
         # Deal with batched input, convert from [N, C, num_el] to [C, N * num_el]
         if len(xyz.shape) == 3:
             N, _, HW = xyz.shape
@@ -83,7 +89,7 @@ class PointCloud(BaseMap):
                 else:
                     self.normals = torch.cat((self.normals, torch.zeros_like(normals)), dim=1)
 
-            if self.has_road_flag:
+            if self.has_road:
                 if is_road is not None:
                     self.is_road = torch.cat((self.is_road, is_road), dim=1)
                 else:
@@ -119,9 +125,10 @@ class PointCloud(BaseMap):
             pcd.point.colors = self.rgb.permute(1, 0).cpu().numpy()
 
         if self.has_normals:
+            self.normals = self.normals / torch.linalg.norm(self.normals, dim=0).reshape(1, -1)
             pcd.point.normals = self.normals.float().permute(1, 0).cpu().numpy()
 
-        if self.has_road_flag:
+        if self.has_road:
             pcd.point.is_road = self.is_road.permute(1, 0).int().cpu().numpy()
 
         self.pcd = pcd
@@ -183,6 +190,9 @@ class PointCloud(BaseMap):
         if self.has_normals:
             skydome.point.normals = np.zeros_like(coords.permute(1, 0).float().cpu().numpy())
 
+        if self.has_road:
+            skydome.point.is_road = torch.zeros((num_kept_points, 1)).int().cpu().numpy()
+
         self.pcd = self.pcd + skydome # open3d 18.0 allows concatenating pointclouds like this
 
     def add_init_cloud(self, init_ply_path: Union[str, Path]) -> None:
@@ -199,20 +209,37 @@ class PointCloud(BaseMap):
         if init_cloud.point.positions.dtype == o3d.core.Dtype.Float32:
             init_cloud.point.positions = init_cloud.point.positions.to(o3d.core.Dtype.Float64)
 
-        # We have colors as float32 values between 0 and 1
-        if init_cloud.point.colors.dtype == o3d.core.Dtype.UInt8:
-            init_cloud.point.colors = init_cloud.point.colors.to(o3d.core.Dtype.Float32) / 255.0
-
         # Need to make sure we have the right attributes otherwise we can't concat
         xyz = np.asarray(init_cloud.point.positions.to(o3d.core.Dtype.Float32)) # we need float32 for colors and normals
-        if init_cloud.point.normals is None:
-            init_cloud.point.normals = np.zeros_like(xyz)
-        if init_cloud.point.colors is None:
-            init_cloud.point.colors = np.zeros_like(xyz)
+        N, _ = xyz.shape
+        if self.has_rgb:
+            try:
+                # We have colors as float32 values between 0 and 1
+                if init_cloud.point.colors.dtype == o3d.core.Dtype.UInt8:
+                    init_cloud.point.colors = init_cloud.point.colors.to(o3d.core.Dtype.Float32) / 255.0
+
+            except Exception as E:
+                init_cloud.point.colors = torch.zeros_like(xyz).float().cpu().numpy()
+
+        if self.has_normals:
+            try:
+                # We have normals as float32
+                init_cloud.point.normals = init_cloud.point.normals.to(o3d.core.Dtype.Float32)
+
+            except Exception as E:
+                init_cloud.point.normals = torch.zeros_like(xyz).float().cpu().numpy()
+
+        if self.has_road:
+            init_cloud.point.is_road = torch.zeros((xyz.shape[0], 1)).int().cpu().numpy()
 
         self.pcd = self.pcd + init_cloud # open3d 18.0 allows concatenating pointclouds like this
 
-    def downsample(self, voxel_size: float = 0.05, depth_scale: float = None, remember_init_cloud: bool = False) -> None:
+    def downsample(
+            self,
+            voxel_size: float = 0.05,
+            depth_scale: float = 1.0,
+            remember_init_cloud: bool = False
+            ) -> None:
         """
         Downsamples the open3D point cloud that is created after running `postprocess()`
         using voxel downsampling. Optionally saves the point cloud before
@@ -222,9 +249,9 @@ class PointCloud(BaseMap):
             raise RuntimeError("You need to first run 'PointCloud.postprocess()' before downsampling!")
 
         init_num_points = len(self.pcd.point.positions)
+
         # To convert metric scale to up-to-scale pose's scale
-        if depth_scale is not None:
-            scaled_voxel_size = voxel_size * depth_scale
+        scaled_voxel_size = voxel_size * depth_scale
 
         if remember_init_cloud:
             self.pcd_before_downsample = self.pcd
@@ -257,5 +284,5 @@ class PointCloud(BaseMap):
             output_dir = Path(output_dir)
 
         file_path = str(output_dir / filename) # open3d needs paths as strings
-        o3d.io.write_point_cloud(file_path, self.pcd.to_legacy())
+        o3d.t.io.write_point_cloud(file_path, self.pcd)
         log.info(f"Wrote point cloud to disk at {file_path} with {len(self.pcd.point.positions)} points!")

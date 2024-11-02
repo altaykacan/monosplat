@@ -1,2 +1,0 @@
-This directory contains collections of commands to run the evaluations that are reported in the main text of my M.Sc. thesis. To run the scripts directly, you might need to adjust the directories and also add the root directory of this repo to your python path, by running: `export PYTHONPATH="${PYTHONPATH}:$(pwd)"` when you are at `./DEN-Splatting`
--Altay, 23.06.24

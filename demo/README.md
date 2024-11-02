@@ -1,0 +1,1 @@
+This directory contains data to run demos with. The `kitti` and `kitti360` directories contain the ground-truth poses and predictions from DVSO.

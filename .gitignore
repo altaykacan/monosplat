@@ -20,6 +20,8 @@ evaluation/eval_results/*
 demo/pointcloud/gt_map.ply
 demo/pointcloud/pred_map.ply
 
+assets/videos/
+
 
 # Debug
-tests/test_results/*
+tests/test_results/

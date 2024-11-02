@@ -21,8 +21,8 @@ def project_pcd_o3d(
     """
     Projects the 3d point clouds into a pinhole camera using open3D
     """
-    intrinsics = o3d.core.Tensor(intrinsics.float().numpy())
-    extrinsics = o3d.core.Tensor(extrinsics.float().numpy())
+    intrinsics = o3d.core.Tensor(intrinsics.float().cpu().numpy())
+    extrinsics = o3d.core.Tensor(extrinsics.float().cpu().numpy())
 
     # This function only works with float32, might change in the future
     if get_rgb:

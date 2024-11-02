@@ -39,7 +39,14 @@ python 6_create_pointcloud.py -r /usr/stud/kaa/data/root/ds01 --intrinsics 534.0
 
 
 # rgbd
-python 6_create_pointcloud.py -r /usr/stud/kaa/data/root/ds01 --intrinsics 534.045 534.045 512 288 --pose_path /usr/stud/kaa/data/root/ds01/poses/slam/1_rgbd_CameraTrajectory.txt --reconstructor simple --backprojector depth_dropout --dataset custom --max_d 100 --depth_model precomputed --seg_model segformer --pose_scale 1.0 --use_every_nth 3 --batch_size 2 --dropout 0.98 --downsample_pointcloud_voxel_size 0.05 --add_skydome --recon_name colmap_dense_rgbd_skydome --clean_pointcloud --depth_scale 1.0
+python 6_create_pointcloud.py -r /usr/stud/kaa/data/root/ds01 --intrinsics 534.045 534.045 512 288 --pose_path /usr/stud/kaa/data/root/ds01/poses/slam/1_rgbd_CameraTrajectory.txt --reconstructor simple --backprojector depth_dropout --dataset custom --max_d 100 --depth_model precomputed --seg_model segformer --pose_scale 1.0 --use_every_nth 3 --batch_size 2 --dropout 0.98 --downsample_pointcloud_voxel_size 0.05 --add_skydome --recon_name rgbd_dense_skydome --clean_pointcloud --depth_scale 1.0
+
+####
+# For creating nice videos
+####
+python 6_create_pointcloud.py -r /usr/stud/kaa/data/root/ds01 --intrinsics 534.045 534.045 512 288 --reconstructor simple --backprojector simple --dataset colmap --max_d 40 --depth_model precomputed --seg_model segformer --pose_scale 1.0 --use_every_nth 3 --batch_size 2 --dropout 0.95 --recon_name colmap_dense_cloud_with_skydome_vid --add_skydome --clean_pointcloud --depth_scale 0.0501002 --downsample_pointcloud_voxel_size 0.05
+
+python 6_create_pointcloud.py -r /usr/stud/kaa/data/root/ds01 --intrinsics 534.045 534.045 512 288 --pose_path /usr/stud/kaa/data/root/ds01/poses/slam/1_rgbd_CameraTrajectory.txt --reconstructor simple --backprojector simple --dataset custom --max_d 40 --depth_model precomputed --seg_model segformer --pose_scale 1.0 --use_every_nth 3 --batch_size 2 --dropout 0.95 --downsample_pointcloud_voxel_size 0.05 --add_skydome --recon_name rgbd_dense_skydome_vid --clean_pointcloud --depth_scale 1.0
 
 
 ####
@@ -145,3 +152,13 @@ python 6_create_pointcloud.py -r /usr/stud/kaa/data/root/ottendichler --intrinsi
 # rgbd
 # python 6_create_pointcloud.py -r /usr/stud/kaa/data/root/ottendichler --intrinsics 525.75 525.75 512 288 --pose_path /usr/stud/kaa/data/root/ottendichler/poses/slam/1_rgbd_CameraTrajectory.txt --reconstructor simple --backprojector depth_dropout --dataset custom --max_d 40 --depth_model precomputed --seg_model segformer --pose_scale 1.0 --use_every_nth 3 --batch_size 2 --dropout 0.98 --downsample_pointcloud_voxel_size 0.05 --add_skydome --recon_name rgbd_dense_skydome --clean_pointcloud --depth_scale 1.0
 python 6_create_pointcloud.py -r /usr/stud/kaa/data/root/ottendichler --intrinsics 525.75 525.75 512 288 --pose_path /usr/stud/kaa/data/root/ottendichler/poses/slam/1_rgbd_CameraTrajectory.txt --reconstructor simple --backprojector depth_dropout --dataset custom --max_d 40 --depth_model precomputed --seg_model segformer --pose_scale 1.0 --use_every_nth 3 --batch_size 2 --dropout 0.98 --downsample_pointcloud_voxel_size 0.1 --add_skydome --recon_name rgbd_dense_skydome_sparser --clean_pointcloud --depth_scale 1.0
+
+# mono
+python 6_create_pointcloud.py -r /usr/stud/kaa/data/root/ottendichler --intrinsics 525.75 525.75 512 288 --pose_path /usr/stud/kaa/data/root/ottendichler/poses/slam/1_mono_CameraTrajectory.txt --reconstructor simple --backprojector depth_dropout --dataset custom --max_d 40 --depth_model precomputed --seg_model segformer --pose_scale 1.0 --use_every_nth 5 --batch_size 2 --dropout 0.98  --downsample_pointcloud_voxel_size 0.05 --add_skydome --recon_name mono_dense_skydome --clean_pointcloud --depth_scale 0.0531
+
+
+# mono to compare to colmap, without depth-based dropout
+python 6_create_pointcloud.py -r /usr/stud/kaa/data/root/ottendichler --intrinsics 525.75 525.75 512 288 --pose_path /usr/stud/kaa/data/root/ottendichler/poses/slam/1_mono_CameraTrajectory.txt --reconstructor simple --backprojector simple --dataset custom --max_d 30 --depth_model precomputed --seg_model segformer --pose_scale 1.0 --use_every_nth 5 --batch_size 2 --dropout 0.95  --downsample_pointcloud_voxel_size 0.05 --add_skydome --recon_name mono_dense_skydome_denser --clean_pointcloud --depth_scale 0.0531
+
+# colmap dense to compare to mono, dense
+python 6_create_pointcloud.py -r /usr/stud/kaa/data/root/ottendichler --intrinsics 525.75 525.75 512 288 --reconstructor simple --backprojector simple --dataset colmap --max_d 30 --depth_model precomputed --seg_model segformer --pose_scale 1.0 --use_every_nth 5 --batch_size 2 --dropout 0.95 --recon_name colmap_dense_cloud_with_init_and_skydome_denser --init_cloud_path /usr/stud/kaa/data/root/ottendichler/poses/colmap/sparse/0/points3D.ply --add_skydome --clean_pointcloud --depth_scale 0.0525 --downsample_pointcloud_voxel_size 0.05

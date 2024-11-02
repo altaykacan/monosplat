@@ -1,0 +1,1 @@
+These are scripts taken and slightly adapted from the TUM RBG-D Dataset Python tools to work with poses and compute pose metrics.

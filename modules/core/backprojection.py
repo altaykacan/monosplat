@@ -29,18 +29,18 @@ class Backprojector(BaseBackprojector):
         Y = V - cy
 
         # Undo scaling
-        X = X / fx
+        X = X / fx # x coordinates divided by z values
         Y = Y / fy
         Z = torch.ones_like(X)  # z coordinates will be scaled by depth later
 
         coords = torch.stack([X, Y, Z], axis=2).double().unsqueeze(0).to(device) # [1 ,H, W, 3]
 
-        # Scales coordinates by depth value
+        # Scales coordinates by depth value, depths are of shape [N, 1, H, W]
         xyz = depths[:, :, :, :, None] * coords  # [N, 1, H, W, 3]
         xyz = xyz.squeeze(1).permute(0, 3, 1, 2) # [N, 3, H , W]
 
         # Flatten the output tensors and the masks
-        xyz = xyz.reshape(N, 3, H * W)
+        xyz = xyz.reshape(N, 3, H * W) #[N, 3, num_pixels]
         values = values.reshape(N, C, H * W)
         masks = masks.reshape(N, 1, H * W)
 

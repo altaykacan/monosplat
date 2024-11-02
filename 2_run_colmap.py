@@ -8,9 +8,12 @@
 #
 # For inquiries contact  george.drettakis@inria.fr
 #
-
-# Copied from the original 3D Gaussian Splatting repository, the convert.py file
-# Used to run COLMAP and get camera calibration parameters - Altay
+"""
+Copied and adapted from the original 3D Gaussian Splatting repository for
+running COLMAP (https://github.com/graphdeco-inria/gaussian-splatting).
+Used to run COLMAP for pose prediction and to get an estimate of camera
+calibration parameters if they do not exist.
+"""
 import json
 import os
 import logging

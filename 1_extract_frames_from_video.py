@@ -1,3 +1,9 @@
+"""
+This script extracts frames from a video and saves them to disk as images and
+sets up the dataset folders to run SLAM systems with TUM RGB-D format. It also
+optionally resizes the images and computes the new camera intrinsics after the
+resizing.
+"""
 import json
 import sys
 import argparse

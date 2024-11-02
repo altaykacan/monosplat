@@ -1,6 +1,8 @@
+These are pseudocode examples of how the evaluations were done.
+
 ```python
 def eval_pointcloud(pred_cloud: PointCloud,
-                    gt_reconstruction: Union[PointCloud],
+                    gt_reconstruction: PointCloud,
                     results: ResultsDict
                     ):
 
@@ -20,7 +22,6 @@ def eval_pointcloud(pred_cloud: PointCloud,
     if crop_ref:
         ref_cloud = ref_cloud.crop(pred_cloud.bounding_box)
 
-    # Does registering them make sense?
     if register_clouds:
         if use_color_registration:
             icp_transform = colored_icp_register_both_clouds(pred_cloud, gt_cloud)
@@ -89,13 +90,3 @@ def eval_depths(dataset: CustomDataset,
 
     results.average_over_cameras()
 ```
-
-```python
-def eval_splats(...):
-    # TODO think about this and figure it out, probably need to run multiple times as well
-    pass
-```
-
-
-
-

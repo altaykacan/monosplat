@@ -1,3 +1,7 @@
+"""
+This is the core script that combines pose estimates and depth predictions to
+create and save dense pointclouds. Relies on custom classes defined in `./modules`.
+"""
 import json
 import argparse
 import logging

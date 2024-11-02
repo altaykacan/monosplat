@@ -1,10 +1,13 @@
+import glob
 from pathlib import Path
-from typing import Tuple, Union
+from typing import Tuple, Union, Callable, List
 
 import numpy as np
 import torch
+from PIL import Image
 from torchvision.transforms.functional import to_pil_image, to_tensor
 import matplotlib.pyplot as plt
+import moviepy.editor as mpy
 
 
 def visualize_flow(flow: torch.Tensor, original_image: torch.Tensor = None, flow_vis_step=15, output_path="debug_flow"):
@@ -49,3 +52,27 @@ def visualize_flow(flow: torch.Tensor, original_image: torch.Tensor = None, flow
     plt.tight_layout()
     plt.savefig(Path(f"{output_path}.png"))
     plt.close()
+
+
+def make_vid(images: List[Image.Image], output_path: Path = "video.mp4",  output_dir: Path = "./assets/videos", fps: int = 5):
+    frame_count = len(images)
+    duration = frame_count / fps  # compute duration in seconds based on count and fps
+    last_i = None
+    last_frame = None
+
+    output_path = Path(output_path)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(exist_ok=True, parents=True)
+
+    def make_frame(t):
+        nonlocal last_i, last_frame, fps  # global keyword doesn't work here
+        i = int(t * fps)
+        if i == last_i:
+            return last_frame
+
+        last_frame = np.asarray(images[i])
+
+        return last_frame
+
+    animation = mpy.VideoClip(make_frame, duration=duration)
+    animation.write_videofile(str(output_dir / output_path), fps=fps)

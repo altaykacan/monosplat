@@ -1,3 +1,6 @@
+# Where you want to put your data
+DATA_DIR = "..."
+
 # Where your KITTI360 directory is
 KITTI360_DIR = "/usr/stud/kaa/data/KITTI-360"
 

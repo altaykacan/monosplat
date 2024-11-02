@@ -1,5 +1,10 @@
-# TODO add docstring
-"""Script to apply either sparse or dense scale alignment to monocular SLAM poses or COLMAP poses. Aligns the scale of up-to-scale poses with the internal scale of a """
+"""
+Script to apply either sparse or dense scale alignment to monocular SLAM or
+COLMAP poses. Aligns the scale of up-to-scale poses with the internal scale of
+a monocular depth prediction network. Works best for metric (or approximately metric)
+depth prediction networks as the core assumption is that the scale learned by the
+model is consistent accross a given sequence of images..
+"""
 import json
 import logging
 import argparse

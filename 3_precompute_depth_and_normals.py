@@ -1,3 +1,10 @@
+"""
+This is a script to precompute depth (and optionally surface normal) predictions
+and save them on disk. This avoids redundant computation when experimenting
+with different reconstruction settings for the same video. It is also
+required to align the scale of pose and depth predictions from different
+components of the system (for the script `5_align_scale.py`)
+"""
 import json
 import argparse
 import logging

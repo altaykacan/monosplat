@@ -128,7 +128,9 @@ def plot_dense_alignment_results(
         log_dir: Path,
         dataset: BaseDataset,
         ) -> None:
-
+    ###
+    # Code commented out that was used to save time when creating plots
+    ###
     # # Pickle the input so we can use them later to adjust the plots
     # with open(log_dir / Path("scales.pickle"), "wb") as handle:
     #     pickle.dump(scales, handle, protocol=pickle.HIGHEST_PROTOCOL)

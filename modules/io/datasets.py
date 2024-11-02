@@ -302,7 +302,7 @@ class CustomDataset(BaseDataset):
                 self.image_paths.append(image_path)
                 self.poses.append(pose)
 
-        # Sort all three lists by increasing timestamp (frame id) value
+        # Sort all three lists by increasing timestamps (frame id)
         zipped = sorted(zip(self.frame_ids, self.image_paths, self.poses))
         self.frame_ids = [el[0] for el in zipped]
         self.image_paths = [el[1] for el in zipped]
