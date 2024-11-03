@@ -53,7 +53,7 @@ pip install moviepy # for video creation
 ## Getting Started
 This is a quick tutorial to guide you how to use the provided scripts for your own data.
 
-## Dataset
+### Dataset
 If you are starting with a video input, create a dataset directory and put your video file in it- You also need to specify a dataset root directory where all of your datasets will be stored. The file structure in the beginning should look like this:
 
 ```plaintext
@@ -64,7 +64,7 @@ data_root_dir
 ├── dataset_name_2
 │   └── data
 │       └── your_video_2.mp4
-...
+[...]
 ```
 
 Then you can either setup your config in `./configs/config.yaml` and let the whole pipeline run or you can run each step manually by executing the provided scripts in order. For the second option you should start with extracting images from your video. As an example, assume we are starting with a raw video and do not know the camera intrinsics. We would start with:
@@ -85,18 +85,74 @@ This would give you a good estimate of the intrinsics and also estimate poses. T
 
 By default this script runs COLMAP with the exhaustive matcher. If you are using videos from a video (with sequential images) you can also use the `--use_sequential_matcher` option of the script. You would also need to download the vocabulary tree from the official COLMAP website.
 
-## Pose Estimation
-Once we have the intrinsics, we can either use the poses from COLMAP or run any SLAM system. We found that COLMAP usually performs well but SLAM systems returns much more accurate poses when the camera does a loop. This is expected as COLMAP isn't optimized for sequentially captured images (see https://github.com/colmap/colmap/issues/411 and https://github.com/colmap/colmap/issues/1521).
+### Pose Estimation
+Once we have the intrinsics, we can either use the poses from COLMAP or run any SLAM system. We found that COLMAP usually performs well but SLAM systems returns much more accurate poses when the camera does a loop. This is expected as COLMAP isn't optimized for sequentially captured images (see [this](https://github.com/colmap/colmap/issues/411) and [this](https://github.com/colmap/colmap/issues/1521)).
 
-...
+There are two options to run SLAM to estimate poses:
+1. Use purely visual SLAM,
+2. Use RGB-D SLAM with depth predictions from a depth predictor network.
 
-## Depth and Scale
+In the first case you just need to use a SLAM system capable of working with TUM RGB-D data format. The required `rgb.txt` is created under `/data_root_dir/dataset_name_1/data/` after running `1_extract_frames_from_video.py`. Please see the TUM RGB-D dataset documentation for more information on the expected format [link](https://cvg.cit.tum.de/data/datasets/rgbd-dataset).
 
-## Pointcloud Creation
+For the second case, you would need to incorporate depth predictions of a deep neural net to your SLAM system. To keep things simple and flexible, we chose to do this asynchronously. First run `3_precompute_depth_and_normals.py` with a command like:
 
-## Gaussian Splatting
+```bash
+python 3_precompute_depth_and_normals.py --r /data_root_dir/dataset_name_1 --model metric3d_vit --intrinsics fx fy cx cy --max_depth_png 50 --scale_factor_depth_png 1000
+```
 
-## Evaluation
+By default, this script will save depth and normal predictions both as numpy arrays and png images. To use RGB-D SLAM with the depths, it is the simplest to keep the images as pngs as the TUM RGB-D dataset format expects it. Additionally, it allows you to easily view the model predictions by sacrificing some disk space. Since we are using the Metric3Dv2 family of models by default, we can both predict approximately metric depths and surface normals. If you do not have a model to predict normals or want to save disk space you can provide the `--skip_depth_png` and `--skip_normals` flags.
+
+Since the TUM RGB-D dataset expects depths to be monochrome 16-bit png images, to capture decimal numbers in the predicted depths (which are floats) we need to scale the depth values. This is specified by the `--scale_factor_depth_png 1000` argument. **Make sure you are using the same depth png scale factor and intrinsics for your SLAM system**.
+
+This script also uses a segmentation model to predict masks for movable objects and set their depths to a large constant value. This allows you to effectively mask out movable objects by simply setting a maximum depth in your SLAM system. The extracted feature points/estimated depths by the SLAM system will get filtered out when combined with the depth pseudo-measurements. You can provide the `--skip_mask_depth_png` flag to disable this behaviour.
+
+After running the depth and normal computation script for `dataset_name_1` we would end up with:
+
+```plaintext
+data_root_dir
+├── dataset_name_1
+│   ├── data
+│   │   ├── rgb                # has all your images
+│   │   ├── depths
+│   │   │   ├── arrays         # as numpy arrays
+│   │   │   └── images         # as 16-bit monochrome png files
+│   │   ├── normals
+│   │   │   ├── arrays
+│   │   │   └── images
+│   │   ├── rgb.txt
+│   │   ├── depth.txt
+│   │   ├── associations.txt   # needed for RGB-D SLAM in TUM RGB-D format
+│   │   └── your_video_1.mp4
+│   └── poses
+│       └── colmap             # where all the colmap results are
+├── dataset_name_2
+│   └── data
+│       └── your_video_2.mp4
+[...]
+```
+
+Once you run your SLAM system and get poses in the TUM RGB-D format, you can simply create a new directory under poses and put the text files there:
+
+```plaintext
+[...]
+│   └── poses
+│       ├── slam
+│       |    ├── poses_1.txt
+│       |    ├── poses_2.txt
+│       |    └── [...]
+│       └── colmap             # where all the colmap results are
+[...]
+```
+
+
+### Scale Alignment
+To create pointclouds by backprojecting the predicted depths and combining them with the poses, we need to *align the scales of the depths and poses*. With monocular SLAM, the poses are only accurate up to an unknown scale factor (due to scale ambiguity) and even though the depth model we are using is trained to predict *metric* depth, it is usually not perfectly accurate. The model might have learned an internal scale value that is close to metric scale but might be off.
+
+### Pointcloud Creation
+
+### Gaussian Splatting
+
+### Evaluation
 
 
 
