@@ -1,3 +1,4 @@
+# TODO implement
 defaults:
   - dataset: kitti360
   - pose_estimation: orb-slam
@@ -20,7 +21,7 @@ precomputation:
   normal: True
 
 pose_estimation:
-  skip: True # not implemented yet, please provide estimated poses
+  skip: True # not implemented yet, please provide estimated poses or use colmap
 
 scale_alignment:
   skip: False

@@ -4,10 +4,10 @@ This is a library and collection of scripts that allow combining pose prediction
 The whole pipeline works in an offline fashion and each step can be run individually by running the numbered scripts. The script `run.py` runs the whole pipeline based on hydra configuration specified in `
 
 ## TODO
-- [ ] Implement configs and `run.py` to connect the whole pipeline
 - [ ] Implement `4_estimate_poses.py` and SLAM wrappers for ORB-SLAM3 to incorporate SLAM pose estimation
 - [ ] Add demo data and example
 - [ ] Finish up the README.md
+- [ ] Implement configs and `run.py` to connect the whole pipeline and run the scripts according to config
 
 ## Setup
 To clone:
@@ -50,6 +50,7 @@ pip install hydra-core --upgrade # for configs
 pip install moviepy # for video creation
 ```
 
+---
 ## Getting Started
 This is a quick tutorial to guide you how to use the provided scripts for your own data.
 
@@ -85,6 +86,9 @@ This would give you a good estimate of the intrinsics and also estimate poses. T
 
 By default this script runs COLMAP with the exhaustive matcher. If you are using videos from a video (with sequential images) you can also use the `--use_sequential_matcher` option of the script. You would also need to download the vocabulary tree from the official COLMAP website.
 
+You can also save masks for movable objects to ignore pixels belonging to them when reconstructing the point cloud. Please see `./thesis/tools/create_masks.py` for a script on how to do that.
+
+---
 ### Pose Estimation
 Once we have the intrinsics, we can either use the poses from COLMAP or run any SLAM system. We found that COLMAP usually performs well but SLAM systems returns much more accurate poses when the camera does a loop. This is expected as COLMAP isn't optimized for sequentially captured images (see [this](https://github.com/colmap/colmap/issues/411) and [this](https://github.com/colmap/colmap/issues/1521)).
 
@@ -97,7 +101,7 @@ In the first case you just need to use a SLAM system capable of working with TUM
 For the second case, you would need to incorporate depth predictions of a deep neural net to your SLAM system. To keep things simple and flexible, we chose to do this asynchronously. First run `3_precompute_depth_and_normals.py` with a command like:
 
 ```bash
-python 3_precompute_depth_and_normals.py --r /data_root_dir/dataset_name_1 --model metric3d_vit --intrinsics fx fy cx cy --max_depth_png 50 --scale_factor_depth_png 1000
+python 3_precompute_depth_and_normals.py -r /data_root_dir/dataset_name_1 --model metric3d_vit --intrinsics fx fy cx cy --max_depth_png 50 --scale_factor_depth_png 1000
 ```
 
 By default, this script will save depth and normal predictions both as numpy arrays and png images. To use RGB-D SLAM with the depths, it is the simplest to keep the images as pngs as the TUM RGB-D dataset format expects it. Additionally, it allows you to easily view the model predictions by sacrificing some disk space. Since we are using the Metric3Dv2 family of models by default, we can both predict approximately metric depths and surface normals. If you do not have a model to predict normals or want to save disk space you can provide the `--skip_depth_png` and `--skip_normals` flags.
@@ -136,23 +140,51 @@ Once you run your SLAM system and get poses in the TUM RGB-D format, you can sim
 ```plaintext
 [...]
 │   └── poses
-│       ├── slam
+│       ├── slam             # make sure to name this directory 'slam'
 │       |    ├── poses_1.txt
 │       |    ├── poses_2.txt
 │       |    └── [...]
-│       └── colmap             # where all the colmap results are
+│       └── colmap
 [...]
 ```
 
-
+---
 ### Scale Alignment
 To create pointclouds by backprojecting the predicted depths and combining them with the poses, we need to *align the scales of the depths and poses*. With monocular SLAM, the poses are only accurate up to an unknown scale factor (due to scale ambiguity) and even though the depth model we are using is trained to predict *metric* depth, it is usually not perfectly accurate. The model might have learned an internal scale value that is close to metric scale but might be off.
 
-### Pointcloud Creation
+The script `5_align_scale.py` is exactly for this purpose and uses the different scale alignment methods as implemented in `./modules/scale_alignment`. You can use the script as following:
 
+```bash
+python 5_align_scale.py -r /data_root_dir/dataset_name_1 -p /data_root_dir/dataset_name_1/sparse/0/images.txt --intrinsics fx fy cx cy -a dense --dataset colmap --seg_model_type precomputed --exp_name your_experiment_name
+```
+
+There are many options on how to do scale alignment which are all explained in the arguments of the script, for in depth explanations and a list of arguments please run:
+
+```bash
+python 5_align_scale.py --help
+```
+
+The computed scale factors will be saved in the parent directory of the pose files you specify with the `-p` option, i.e. under `/data_root_dir/dataset_name_1/sparse/0/scales_and_shifts.txt`. With the `dense` alignment option, these values will all be the same and no shift factor will be computed. If you specify `-a sparse` instead, the script optimizes per-frame depth scale factors. If you want to compute per-frame shifts additionally, also provide the `--compute_shift_and_scale` flag.
+
+The scale factor is the scale you need to *multiply the depths* with.
+
+---
+### Point cloud Creation
+With scale-aligned poses and depth predictions, we can simply backproject each image and accumulate dense point clouds.
+
+The command:
+```bash
+python 6_create_pointcloud.py -r /data_root_dir/dataset_name_1 --intrinsics fx fy cx cya --reconstructor simple --backprojector simple --dataset colmap --max_d 50 --depth_model precomputed --seg_model segformer --pose_scale 1.0 --use_every_nth 3 --batch_size 2 --dropout 0.90 --downsample_pointcloud_voxel_size 0.05 --init_cloud_path /data_root_dir/dataset_name_1/colmap/sparse/0/points3D.ply --add_skydome --recon_name your_reconstruction_name --clean_pointcloud --depth_scale your_scale_value
+```
+
+demonstrates the main functionality of `6_create_pointcloud.py`. To add the initial point cloud (i.e. the sparse point cloud from COLMAP or any other point cloud you have) just specify the path with `--init_cloud_path`.
+
+The `--depth_scale` is the value you get by running scale alignment as above. You can alternatively provide `--scales_and_shifts_path` if you want to experiment with using per-frame scale estimates or scale estimates with shifts.
+
+---
 ### Gaussian Splatting
+The final step is to use the point clouds you created
 
-### Evaluation
 
 
 

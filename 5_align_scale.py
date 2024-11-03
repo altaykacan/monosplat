@@ -47,6 +47,7 @@ def main(args):
     debug = args.debug
     exp_name = args.exp_name
     padded_img_name_length = args.padded_img_name_length
+    compute_shift_and_scale = args.compute_shift_and_scale
 
     if not root_dir.exists():
         raise RuntimeError(f"Your root_dir at '{str(root_dir)}' does not exist! Please make sure you give the right path.")
@@ -59,6 +60,7 @@ def main(args):
     depth_dir = root_dir / Path("data/depths/arrays") # as .npy arrays
     image_dir = root_dir / Path("data/rgb") # as png files
 
+    # TODO implement using segmentation models instead of just precomputed masks
     if mask_moveables and seg_model_type == "precomputed":
         mask_dir = root_dir / "data" / "masks_moveable"
         if not mask_dir.exists():
@@ -122,6 +124,7 @@ def main(args):
             return -1
 
         # By default we only compute scales, shift factors are all 0
+        return_only_scale = not compute_shift_and_scale
         scales, shifts = do_sparse_alignment(
             dataset,
             sparse_cloud_path,
@@ -129,6 +132,7 @@ def main(args):
             max_d=max_d,
             seg_model_type=seg_model_type,
             log_dir=log_dir,
+            return_only_scale=return_only_scale,
             )
         if isinstance(dataset, KITTI360Dataset) and depth_type == "gt":
             depth_paths = dataset.gt_depth_paths
@@ -191,8 +195,8 @@ if __name__ == "__main__":
     parser.add_argument("--sparse_cloud_path", type=str, default=None, help="The path to the sparse point cloud. Only needed if you are using sparse alignment with '--alignment_type sparse'.")
     parser.add_argument("--target_size", type=int, nargs=2, default=(), help="The target (H, W) to resize the images to. Leave empty to use the original image sizes from extracted frames. Provide input as '--target_size H W'")
     parser.add_argument("--dataset", type=str, default="custom", help="Dataset type to use. Choose either 'colmap', 'combined_colmap', 'custom' or 'kitti360'. If you choose 'kitti360' the ground truth poses and depths will be used and you need to provide '--cam_id' and '--seq_id' options. This is useful to validate the scale alignment methods.")
-    parser.add_argument("--skip_mask_moveables", action="store_true", help="Flag to SKIP masking pixels belonging moveable objects. Not relevant for sparse alignment")
     parser.add_argument("--seg_model_type", type=str, default="precomputed", choices=["predict", "precomputed", "none"], help="The type of segmentation model you want to use for dense scale alignment. Give either 'predict' or 'precomputed'. Only relevant for '--alignment_type dense'")
+    parser.add_argument("--skip_mask_moveables", action="store_true", help="Flag to SKIP masking pixels belonging moveable objects. Not relevant for sparse alignment")
     parser.add_argument("--skip_mask_occlusions", action="store_true", help="Flag to SKIP masking pixels in occluded regions. Not relevant for sparse alignment.")
     parser.add_argument("--mask_disocclusions", action="store_true", help="Flag to mask pixels in disoccluded regions. Not relevant for sparse alignment.")
     parser.add_argument("--flow_steps", type=int, nargs="+", default=[2, 4, 6], help="Step sizes for computing optical flow. Dense scale alignment is done for each of the integers you provide and the scale factors are averaged. Provide input as '--flow_step 1 2 3 ...'.")
@@ -205,6 +209,7 @@ if __name__ == "__main__":
     parser.add_argument("--debug", action="store_true", help="Debug flag, uses a subset of the images to avoid long waiting times when debugging.")
     parser.add_argument("--exp_name", type=str, default=None, help="Optional experiment name to save results into a different directory. Useful for evaluation and validation.")
     parser.add_argument("--padded_img_name_length", type=int, default=PADDED_IMG_NAME_LENGTH, help="Total image name length. The integer frame id will be prepended with zeros until it reaches this length. For colmap datasets use 5, for KITTI use 6, for KITTI360 use 10")
+    parser.add_argument("--compute_shift_and_scale", action="store_true", help="Flag that specifies that shift values should be computed alongside the per-frame scale factors for the depths. Only relevant for sparse scale alignment")
 
     args = parser.parse_args()
     main(args)
