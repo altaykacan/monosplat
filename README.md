@@ -4,10 +4,10 @@ This is a library and collection of scripts that allow combining pose prediction
 The whole pipeline works in an offline fashion and each step can be run individually by running the numbered scripts. The script `run.py` runs the whole pipeline based on hydra configuration specified in `
 
 ## TODO
+- [x] Finish up the README.md
+- [ ] Implement main hydra configs and `run.py` to connect the whole pipeline and run the scripts
 - [ ] Implement `4_estimate_poses.py` and SLAM wrappers for ORB-SLAM3 to incorporate SLAM pose estimation
 - [ ] Add demo data and example
-- [ ] Finish up the README.md
-- [ ] Implement configs and `run.py` to connect the whole pipeline and run the scripts according to config
 
 ## Setup
 To clone:
@@ -47,10 +47,9 @@ pip install open3d
 pip install plyfile
 pip install tensorboard
 pip install hydra-core --upgrade # for configs
-pip install moviepy # for video creation
+pip install moviepy # for animations
 ```
 
----
 ## Getting Started
 This is a quick tutorial to guide you how to use the provided scripts for your own data.
 
@@ -86,9 +85,8 @@ This would give you a good estimate of the intrinsics and also estimate poses. T
 
 By default this script runs COLMAP with the exhaustive matcher. If you are using videos from a video (with sequential images) you can also use the `--use_sequential_matcher` option of the script. You would also need to download the vocabulary tree from the official COLMAP website.
 
-You can also save masks for movable objects to ignore pixels belonging to them when reconstructing the point cloud. Please see `./thesis/tools/create_masks.py` for a script on how to do that.
+You can also save segmentation masks for movable objects to ignore pixels belonging to them when reconstructing the point cloud, saving precomputed depths, or training a 3D Gaussian Splatting model. Please see `./thesis/tools/create_masks.py` for a script on how to do that.
 
----
 ### Pose Estimation
 Once we have the intrinsics, we can either use the poses from COLMAP or run any SLAM system. We found that COLMAP usually performs well but SLAM systems returns much more accurate poses when the camera does a loop. This is expected as COLMAP isn't optimized for sequentially captured images (see [this](https://github.com/colmap/colmap/issues/411) and [this](https://github.com/colmap/colmap/issues/1521)).
 
@@ -148,7 +146,6 @@ Once you run your SLAM system and get poses in the TUM RGB-D format, you can sim
 [...]
 ```
 
----
 ### Scale Alignment
 To create pointclouds by backprojecting the predicted depths and combining them with the poses, we need to *align the scales of the depths and poses*. With monocular SLAM, the poses are only accurate up to an unknown scale factor (due to scale ambiguity) and even though the depth model we are using is trained to predict *metric* depth, it is usually not perfectly accurate. The model might have learned an internal scale value that is close to metric scale but might be off.
 
@@ -168,7 +165,6 @@ The computed scale factors will be saved in the parent directory of the pose fil
 
 The scale factor is the scale you need to *multiply the depths* with.
 
----
 ### Point cloud Creation
 With scale-aligned poses and depth predictions, we can simply backproject each image and accumulate dense point clouds.
 
@@ -177,21 +173,65 @@ The command:
 python 6_create_pointcloud.py -r /data_root_dir/dataset_name_1 --intrinsics fx fy cx cya --reconstructor simple --backprojector simple --dataset colmap --max_d 50 --depth_model precomputed --seg_model segformer --pose_scale 1.0 --use_every_nth 3 --batch_size 2 --dropout 0.90 --downsample_pointcloud_voxel_size 0.05 --init_cloud_path /data_root_dir/dataset_name_1/colmap/sparse/0/points3D.ply --add_skydome --recon_name your_reconstruction_name --clean_pointcloud --depth_scale your_scale_value
 ```
 
-demonstrates the main functionality of `6_create_pointcloud.py`. To add the initial point cloud (i.e. the sparse point cloud from COLMAP or any other point cloud you have) just specify the path with `--init_cloud_path`.
+demonstrates the main functionality of `6_create_pointcloud.py`. Depending on what you specify for the reconstruction name, this script will save dense point cloud reconstructions (with associated poses, intrinsics, and logs to run Gaussian Splatting easily) under a new directory `reconstructions` in your dataset directory. Your directory structure should look something like this:
 
-The `--depth_scale` is the value you get by running scale alignment as above. You can alternatively provide `--scales_and_shifts_path` if you want to experiment with using per-frame scale estimates or scale estimates with shifts.
+```plaintext
+data_root_dir
+├── dataset_name_1
+│   ├── data
+│   │   ├── rgb
+│   │   ├── depths
+│   │   │   ├── arrays
+│   │   │   └── images
+│   │   ├── normals
+│   │   │   ├── arrays
+│   │   │   └── images
+│   │   ├── rgb.txt
+│   │   ├── depth.txt
+│   │   ├── associations.txt
+│   │   └── your_video_1.mp4
+│   ├── poses
+│   │   ├── slam
+│   │   └── colmap
+│   └── reconstructions
+│       └── reconstruction_name   # has .ply and everything else for 3dgs
+├── dataset_name_2
+│   └── data
+│       └── your_video_2.mp4
+[...]
+```
 
----
+The reconstruction (the `.ply` file) will get used to initialize the Gaussians if you want to use 3D Gaussian Splatting. To additionally include the initial point cloud (i.e. the sparse point cloud from COLMAP or any other point cloud you have) just specify the path with `--init_cloud_path`. It is important to make sure that the initial cloud you are adding, the poses, and the approximately metric depth predictions all have the same scale.
+
+There are three ways to determine which scaling factors are used in the reconstruction. The `--depth_scale` is the value you get by running scale alignment in the previous step. The depth predictions from the neural network get multiplied by this value. You can alternatively provide `--scales_and_shifts_path` if you want to experiment with using per-frame scale estimates or scale estimates with shifts. With this option, every depth prediction would get multipled by its corresponding scale factor and a shift gets applied. Finally, you can set `--pose_scale` to multiply the poses by a constant factor. This value would be the reciprocal of the numerical value you use for the depth scale.
+
+Please refer to the help options of `6_create_pointcloud.py` for more details and a complete list of arguments.
+
 ### Gaussian Splatting
-The final step is to use the point clouds you created
+The final step is to use the point clouds you created to initialize a set of Gaussians. The script `7_train_gaussians.py` itself has only a few arguments and forwards any other arguments it receives to the training script under `./submodules/gaussian-splatting/train.py`.
 
+Here's an example command you can run for your own data:
+```bash
+python 7_train_gaussians.py -r /data_root_dir/dataset_name_1 --recon_name reconstruction_name -o splat_name --use_mask --mask_path /data_root_dir/dataset_name_1/data/masks --use_gt_depth --use_gt_normal --use_every_nth_as_val 10
+```
 
+The `--use_gt_normal` and `--use_gt_depth` flags specify whether normal and depth regularization should be used. The current version includes custom depth and normal rendering code which was the only option during the time this project was done. Now, the original 3DGS repository supports depth rendering which is recommended.
+
+If you provide the `--colmap_dir` argument instead of a reconstruction name, the script will ignore the custom dense point cloud reconstructions and train 3DGS expecting the default colmap directory structure, i.e. this path should be `/data_root_dir/dataset_name_1/poses/colmap`.
+
+You can specify all other arguments to the 3DGS `train.py` script through `7_train_gaussians.py` as in the original implementation. Please see [here](https://github.com/graphdeco-inria/gaussian-splatting?tab=readme-ov-file#running) for more details.
+
+The trained splats will be saved under `/dataset_root_dir/dataset_name_1/splats/splat_name` in the default 3DGS format. Thus, you can use any viewer that supports viewing 3D Gaussians.
 
 
 ## Acknowledgements
-- evo
-- metric3d
-- MMseg
-- unidepth
-- ...
-*TODO: Add links and complete the list!*
+Thanks to all of these great repositiories and research for making this project possible:
+
+- TUM RGB-D dataset (https://cvg.cit.tum.de/data/datasets/rgbd-dataset)
+- COLMAP (https://github.com/colmap/colmap)
+- ORB-SLAM3 (https://github.com/UZ-SLAMLab/ORB_SLAM3)
+- Metric3D (https://github.com/YvanYin/Metric3D)
+- 3DGS (https://github.com/graphdeco-inria/gaussian-splatting)
+- GaussianPro (https://github.com/kcheng1021/GaussianPro/tree/version1.0)
+- evo (https://github.com/MichaelGrupp/evo)
+- MMseg (https://github.com/open-mmlab/mmsegmentation)
