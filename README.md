@@ -12,7 +12,7 @@ The whole pipeline works in an offline fashion and each step can be run individu
 ## Setup
 To clone:
 ```bash
-git clone --recurse-submodules git@github.com:altaykacan/DEN-Splatting.git
+git clone --recurse-submodules git@github.com:altaykacan/monosplat.git
 ```
 
 If you forgot to include `--recurse-submodules` you can use the following after cloning:
@@ -22,8 +22,8 @@ git submodule update --init --recursive
 
 Environment setup, currently only tested with PyTorch 2.0.1, CUDA 11.8, and Python 3.8:
 ```bash
-conda env create -n thesis python=3.8
-conda activate thesis
+conda env create -n monosplat python=3.8
+conda activate monosplat
 
 ### For Metric3Dv2 ###
 cd modules/depth/Metric3Dv2
