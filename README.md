@@ -1,7 +1,12 @@
 # General Large-Scale Dense 3D Point Cloud Reconstruction from a Monocular Camera
+> ![Teaser Video](./assets/teaser_video.gif)
+> ![Results](./assets/results.png)
+
 This is a library and collection of scripts that allow combining pose predictions from a monocular SLAM system with depth predictions from a monocular depth neural network to create dense point clouds. The resulting point clouds can then be used to initialize 3D Gaussians for 3D Gaussian Splatting and photorealistic rendering.
 
-The whole pipeline works in an offline fashion and each step can be run individually by running the numbered scripts. The script `run.py` runs the whole pipeline based on hydra configuration specified in `
+The whole pipeline works in an offline fashion and each step can be run individually by running the enumerated scripts.
+
+
 
 ## TODO
 - [x] Finish up the README.md
@@ -52,6 +57,9 @@ pip install moviepy # for animations
 
 ## Getting Started
 This is a quick tutorial to guide you how to use the provided scripts for your own data.
+
+This is the overall pipeline that is implemented to create 3D renderings from monocular video input:
+> ![Pipeline](./assets/pipeline.png)
 
 ### Dataset
 If you are starting with a video input, create a dataset directory and put your video file in it- You also need to specify a dataset root directory where all of your datasets will be stored. The file structure in the beginning should look like this:
@@ -223,6 +231,10 @@ You can specify all other arguments to the 3DGS `train.py` script through `7_tra
 
 The trained splats will be saved under `/dataset_root_dir/dataset_name_1/splats/splat_name` in the default 3DGS format. Thus, you can use any viewer that supports viewing 3D Gaussians.
 
+Here is an example fly-through for a dataset we captured ourselves:
+> ![Example fly-through](./assets/ostspange.gif)
+
+You can find (rough and hacky) scripts on how to create such videos under `./thesis/tools/create_video_*.py`. 
 
 ## Acknowledgements
 Thanks to all of these great repositiories and research for making this project possible:
