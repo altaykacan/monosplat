@@ -58,7 +58,7 @@ pip install moviepy # for animations
 ## Getting Started
 This is a quick tutorial to guide you how to use the provided scripts for your own data.
 
-This is the overall pipeline that is implemented to create 3D renderings from monocular video input:
+This is the overall pipeline that is implemented to create 3D renderings from monocular video input (dotted lines indicate optional input):
 > ![Pipeline](./assets/pipeline.png)
 
 ### Dataset
