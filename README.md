@@ -62,7 +62,7 @@ This is the overall pipeline that is implemented to create 3D renderings from mo
 > ![Pipeline](./assets/pipeline.png)
 
 ### Dataset
-If you are starting with a video input, create a dataset directory and put your video file in it- You also need to specify a dataset root directory where all of your datasets will be stored. The file structure in the beginning should look like this:
+If you are starting with a video input, create a dataset directory and put your video file in it. You also need to specify a dataset root directory where all of your datasets will be stored. The file structure in the beginning should look like this:
 
 ```plaintext
 data_root_dir
@@ -75,7 +75,7 @@ data_root_dir
 [...]
 ```
 
-Then you can either setup your config in `./configs/config.yaml` and let the whole pipeline run or you can run each step manually by executing the provided scripts in order. For the second option you should start with extracting images from your video. As an example, assume we are starting with a raw video and do not know the camera intrinsics. We would start with:
+Then you can either setup your config in `./configs/config.yaml` and let the whole pipeline run (which is not implemented yet, see TODOs) or you can run each step manually by executing the provided scripts in order. For the second option you should start with extracting images from your video. As an example, assume we are starting with a raw video and do not know the camera intrinsics. We would start with:
 
 ```bash
 python 1_extract_frames_from_video.py --video_path data_root_dir/dataset_name_1/your_video_1.mp4 --target_size 576 1024
